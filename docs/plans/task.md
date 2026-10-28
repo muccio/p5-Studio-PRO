@@ -12,3 +12,4 @@
 | 10 | Fix native resolution rendering (exact canvas resize, pixelDensity(1), enableLargerThanScreen) and export modal UI layout (pinned footer, flex scrolling, button clipping fixes) | completed |
 | 11 | Implement separate Preview Window (popout/dock) and external Live Stage Window (multi-display projector routing, F11/double-click fullscreen, unthrottled 60 FPS, synchronized shader/OSC hot-reload) | completed |
 | 12 | Fix Monaco language chunk bloat (eliminate unused XML/90+ languages chunks), fix DOMContentLoaded startup race condition, add DevTools shortcuts & fatal error overlay, re-bundle macOS .app & .dmg | completed |
+| 13 | Initialize Git repository, configure clean `.gitignore`, commit codebase, push to GitHub (`muccio/p5-Studio-PRO`), and create GitHub Release v1.0.0 with `p5-Studio-PRO-1.0.0-arm64.dmg` asset | completed |
