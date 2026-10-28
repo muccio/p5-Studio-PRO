@@ -1,0 +1,165 @@
+# ROLE & OBJECTIVE
+Act as a Principal Creative Coding Systems Architect, Senior Graphics (WebGL/GLSL) Engineer, and Electron Audio Developer. Build a complete, production-ready, cross-platform desktop IDE for **p5.js & GLSL Shaders** (macOS & Windows) named **p5-Studio-PRO**.
+
+The IDE must support:
+1. **Multi-file p5.js & Multi-file GLSL Shader projects** (`#include` preprocessor, local `.js`/`.glsl`/`.vert`/`.frag` files, and external libraries) edited via **Monaco Editor** with live GLSL error diagnostics and stateful shader hot-reloading.
+2. **Dual-Mode Audio-Reactive Engine (Hardware/Virtual Audio Live Input + Offline Deterministic DSP)** with real-time FFT, Waveform, RMS, Frequency Bands, and **automatic WebGL Audio Data Textures (`sampler2D`)** for shaders.
+3. **Bidirectional OSC (Open Sound Control)** over UDP with high-precision timestamp recording and direct OSC-to-Shader uniform binding.
+4. **Pixel-Perfect Cross-OS Rendering Parity** (identical Canvas 2D and WebGL/GLSL output on macOS and Windows) and a **Deterministic Non-Real-Time Frame-by-Frame Video Exporter** via **FFmpeg** that keeps 2D/3D/Shader visuals, audio reactivity, and OSC automation 100% synchronized without ever dropping a frame.
+
+---
+
+# STRICT EXECUTION RULES FOR ANTIGRAVITY
+- **NO PLACEHOLDERS OR STUBS:** Never write `// TODO`, `// implement later`, or `...`. Write the complete, working implementation for every single file.
+- **COMPLETE FILE CREATION:** Create the full directory tree, configuration files, Electron Main/Preload processes, Renderer UI, GLSL Preprocessor & Hot-Reloader, Preview Sandbox Runtime, Offline FFT math engine, and FFmpeg pipeline in one continuous workflow.
+- **SELF-CONTAINED:** Include a default starter multi-file audio-reactive + OSC-reactive **WebGL GLSL Shader + p5.js** project in `templates/default-sketch/` so the application runs a working audio-reactive raymarched/fragment shader immediately upon launch.
+
+---
+
+# 1. ARCHITECTURE & TECH STACK
+Use **Electron + Vite + Vanilla TypeScript/JavaScript + Monaco Editor**.
+
+### Directory Structure to Generate:
+```text
+p5-studio-pro/
+├── package.json
+├── electron.vite.config.js (or vite.config.js + electron build setup)
+├── src/
+│   ├── main/
+│   │   ├── index.js                 # Electron Main Process & Chromium/WebGL parity flags
+│   │   ├── projectManager.js        # Multi-file FS manager, GLSL #include resolver & local HTTP server
+│   │   ├── oscBridge.js             # UDP OSC Server/Client + Timestamped Take Recorder
+│   │   └── ffmpegExporter.js        # FFmpeg stdin raw-pixel pipe (2D & WebGL Y-flip) + WAV muxer
+│   ├── preload/
+│   │   ├── idePreload.js            # IPC bridge for the main IDE UI
+│   │   └── sandboxPreload.js        # Injected into Preview: ideAudio (FFT + GL Texture), ideOSC, ideShader, Virtual Clock
+│   └── renderer/
+│       ├── index.html               # IDE Main Layout (Editor, Preview, Shader Uniform Inspector, Audio/OSC Meters)
+│       ├── style.css                # Dark pro-audio/shader aesthetic UI
+│       ├── main.js                  # Monaco setup, File Tree, Live GLSL Error Markers, Export UI
+│       ├── glslMonacoSetup.js       # Custom GLSL tokenizer, autocomplete & error line highlighter for Monaco
+│       └── audioWorkletRecorder.js  # Float32 PCM stereo/mono recorder for Live Input Takes
+└── templates/
+    └── default-sketch/
+        ├── project.json             # Sketch config, external libraries list, canvas target size
+        ├── index.html               # Sketch host HTML
+        ├── sketch.js                # Main p5.js WEBGL entry point using ideShader, ideAudio, ideOSC
+        ├── common.glsl              # Shared GLSL module (SDFs, rotation matrices, noise) included via #include
+        ├── effect.vert              # Vertex shader
+        └── effect.frag              # Audio-reactive & OSC-reactive Fragment Shader sampling u_audioTex
+
+
+2. CORE TECHNICAL SPECIFICATIONS
+
+A. Cross-Platform Pixel-Perfect Parity for 2D & WebGL (macOS & Windows)
+
+In src/main/index.js, before app.whenReady(), force exact Chromium Skia and WebGL/ANGLE rendering parity across macOS and Windows:
+
+⚬ app.commandLine.appendSwitch('force-color-profile', 'srgb')
+⚬ app.commandLine.appendSwitch('disable-lcd-text')
+⚬ app.commandLine.appendSwitch('high-dpi-support', '1')
+⚬ app.commandLine.appendSwitch('force-device-scale-factor', '1')
+⚬ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+⚬ WebGL Precision & Buffer Enforcement (in sandboxPreload.js):
+  ⚬ Monkey-patch HTMLCanvasElement.prototype.getContext so any 'webgl' or 'webgl2' context created by p5.js automatically enforces:
+    {
+      preserveDrawingBuffer: true,
+      antialias: true,
+      premultipliedAlpha: false,
+      powerPreference: 'high-performance'
+    }
+    
+  ⚬ Automatically prepend #ifdef GL_ES\nprecision highp float;\nprecision highp int;\n#endif\n to fragment shaders if not explicitly declared, preventing mediump precision drift between macOS GPUs and Windows GPUs.
+
+B. Multi-File JS, GLSL #include Preprocessor & Monaco Support
+
+⚬ Local Project Server & Recursive GLSL #include Resolver (projectManager.js):
+  ⚬ Serve the project directory over a local HTTP server or custom protocol.
+  ⚬ Whenever a .vert, .frag, or .glsl file is requested (or loaded via ideShader.load()), parse #include "relative/path.glsl" directives recursively, tracking line numbers and injecting #line directives so WebGL compiler errors map back to the exact file and line number.
+⚬ Monaco Editor GLSL Integration (glslMonacoSetup.js):
+  ⚬ Register a full GLSL language definition in Monaco supporting .vert, .frag, and .glsl extensions with syntax highlighting and autocomplete for built-in GLSL functions (texture2D, smoothstep, mix, clamp, dFdx, dFdy) and standard IDE uniforms (u_resolution, u_time, u_frame, u_audioTex, u_rms, u_bass, u_mid, u_treble).
+  ⚬ Listen for shader compilation error events from the preview sandbox (ERROR: \d+:(\d+): (.*)) and render inline red squiggly diagnostics via monaco.editor.setModelMarkers.
+
+C. Live GLSL Hot-Reloading & Uniform Helper (window.ideShader in sandboxPreload.js)
+
+Expose window.ideShader to p5.js sketches to make shader workflows effortless:
+
+⚬ ideShader.load(p5Instance, vertPath, fragPath):
+  ⚬ Loads and preprocesses the vertex and fragment shaders (resolving #includes).
+  ⚬ Registers the shader pair with the IDE's file watcher.
+  ⚬ Stateful Hot-Reload: When the user edits and saves any .frag, .vert, or included .glsl file in Monaco, re-fetch and re-compile the shader in the active WebGL context on the fly without reloading the page or resetting frameCount, millis(), Audio streams, or OSC state. If compilation fails, keep the last valid compiled shader running so the visual never crashes to a blank screen, and send the compiler log to Monaco.
+⚬ ideShader.bindStandardUniforms(shaderObj, p5Instance):
+  ⚬ Automatically binds every frame:
+    ⚬ u_resolution: [width, height]
+    ⚬ u_time: deterministic time in seconds (millis() / 1000.0)
+    ⚬ u_delta: deterministic delta time in seconds (deltaTime / 1000.0)
+    ⚬ u_frame: integer frameCount
+    ⚬ u_mouse: [mouseX / width, 1.0 - (mouseY / height)]
+    ⚬ u_rms, u_sub, u_bass, u_lowMid, u_mid, u_highMid, u_treble: floats (0.0 to 1.0) from ideAudio
+    ⚬ u_audioTex: the 1024x2 WebGL texture containing full FFT spectrum and Waveform!
+
+D. Dual-Mode Audio-Reactive Engine + WebGL Audio Texture (sandboxPreload.js)
+
+Expose window.ideAudio operating identically in Mode 1 (Real-Time Live Input / File) and Mode 2 (Deterministic Offline Video Export):
+
+1. Real-Time Live Input Mode
+
+⚬ Enumerate hardware/virtual audio input devices (BlackHole, Loopback, VB-Cable, audio interfaces) and open getUserMedia with DSP filters disabled (echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: 48000).
+⚬ Connect to AnalyserNode (fftSize = 2048, smoothingTimeConstant = 0.8).
+⚬ When "Record Take (Audio + OSC)" is active, capture raw Float32Array PCM via AudioWorkletNode and write a lossless 32-bit float .wav file (take_audio.wav) into .takes/.
+
+2. Deterministic Offline DSP Mode (Used during Video Export)
+
+⚬ Load the raw PCM Float32Array from take_audio.wav (or an imported .wav file).
+⚬ For rendered frame N at target fps, slice 2048 samples ending at sample index \lfloor \frac{N}{\text{fps}} \times \text{sampleRate} \rfloor.
+⚬ Apply a Hann Window and execute a complete in-place Radix-2 Cooley-Tukey FFT in pure JS.
+⚬ Apply identical exponential smoothing (0.8) relative to frame N-1 so FFT bins, band energies, and RMS match real-time playback deterministically.
+
+3. WebGL Audio Data Texture (ideAudio.getTexture(p5Instance))
+
+⚬ Maintain a dynamic p5.Image (1024 width \times 2 height, RGBA) updated once per frame in both Live and Offline Export modes:
+  ⚬ Row 0 (y = 0): 1024 FFT frequency bins normalized 0..255 stored in the R channel (with smoothed peak-hold in G channel).
+  ⚬ Row 1 (y = 1): 1024 time-domain Waveform samples mapped 0..255 (where 128 = zero crossing) stored in the R channel.
+⚬ Configure texture parameters to NEAREST / LINEAR filtering and CLAMP_TO_EDGE so inside any .frag shader the user can write:
+  float fftVal = texture2D(u_audioTex, vec2(uv.x, 0.25)).r;
+  float waveVal = (texture2D(u_audioTex, vec2(uv.x, 0.75)).r - 0.5) * 2.0;
+  
+
+Unified window.ideAudio Methods:
+
+⚬ ideAudio.getRMS(), ideAudio.getFFT(), ideAudio.getWaveform(), ideAudio.getEnergy(bandOrLowHz, highHz), ideAudio.isBeat(threshold, minIntervalMs), and ideAudio.getTexture(p5Instance).
+
+E. OSC Engine & Direct Shader Uniform Binding (oscBridge.js + sandboxPreload.js)
+
+⚬ Bind UDP socket in Electron Main (configurable RX port default 9000, TX port 9001).
+⚬ Record incoming OSC messages { timestampMs, address, args } to take_osc.json during "Record Take".
+⚬ Expose window.ideOSC:
+  ⚬ ideOSC.on(address, callback)
+  ⚬ ideOSC.get(address, defaultValue)
+  ⚬ ideOSC.send(address, ...args)
+  ⚬ ideOSC.bindUniforms(shaderObj, mappingObject): Maps OSC addresses directly to shader uniforms (e.g., { u_morph: ['/synth/morph', 0.5], u_color: ['/synth/rgb', [1.0, 0.2, 0.5]] }).
+⚬ Replay recorded OSC messages deterministically at virtual timestamp t_N = \frac{N}{\text{fps}} \times 1000 ms during offline video export.
+
+F. Deterministic Pixel-Perfect Video Exporter for 2D & WebGL (ffmpegExporter.js)
+
+Implement a strict Frame-by-Frame Lockstep Renderer:
+
+1. In the Sandbox window:
+  ⚬ Force pixelDensity(1) and exact target width x height.
+  ⚬ Call noLoop() and override performance.now(), Date.now(), millis(), deltaTime, and frameCount based on virtual frame N.
+2. Dual Context Pixel Extraction (2D vs WebGL):
+  ⚬ If the p5 canvas uses a 2d context: extract ctx.getImageData(0, 0, W, H).data.
+  ⚬ If the p5 canvas uses a webgl / webgl2 context:
+    ⚬ Call gl.finish() to ensure all fragment shader pipelines have completed for frame N.
+    ⚬ Read raw pixels via gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, rawBuffer).
+    ⚬ Fast Vertical Flip in Memory: Because WebGL readPixels uses a bottom-left origin, flip the rows of rawBuffer vertically in-place (swapping row y with row H - 1 - y) before sending over IPC to Electron Main.
+3. Pipe the exact RGBA buffer to ffmpegProcess.stdin (using ffmpeg-static) with strict drain backpressure awaiting between frames, muxing the high-res .wav audio track and supporting:
+  ⚬ H.264 Master (yuv420p, CRF 15)
+  ⚬ H.264 Chroma-Pure (yuv444p, CRF 14 - zero color bleeding on sharp shader edges)
+  ⚬ Apple ProRes 4444 + Alpha (yuva444p10le, pcm_s24le - transparent background shader export on both macOS and Windows)
+
+3. DELIVERABLES & VERIFICATION
+
+1. Generate all files completely without any omissions or placeholders.
+2. In templates/default-sketch/, provide a complete multi-file WebGL Audio + OSC Reactive Shader project (sketch.js, common.glsl, effect.vert, effect.frag) featuring SDF geometry modulated by u_bass, chromatic dispersion driven by u_audioTex FFT sampling, and camera/palette control via OSC (/shader/zoom, /shader/palette).
+3. Provide terminal commands to install (npm install) and run (npm run dev).

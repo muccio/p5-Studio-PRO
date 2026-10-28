@@ -1,0 +1,78 @@
+{
+  "name": "p5-studio-pro",
+  "version": "1.0.0",
+  "description": "Production-ready cross-platform desktop IDE for p5.js and GLSL Shaders with Dual Audio Engine and OSC Bridge",
+  "main": "src/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -s first \"vite\" \"wait-on -t 20000 tcp:5173 && electron .\"",
+    "dev:renderer": "vite",
+    "dev:electron": "electron .",
+    "build": "vite build",
+    "dist:mac": "vite build && electron-builder --mac",
+    "dist:mac:dir": "vite build && electron-builder --mac --dir",
+    "start": "electron .",
+    "test": "node test/verify.js"
+  },
+  "build": {
+    "appId": "com.p5studio.pro",
+    "productName": "p5-Studio-PRO",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/**/*",
+      "templates/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "templates/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null,
+      "hardenedRuntime": false
+    }
+  },
+  "keywords": [
+    "p5js",
+    "glsl",
+    "shaders",
+    "audio-reactive",
+    "osc",
+    "electron",
+    "creative-coding",
+    "webgl"
+  ],
+  "author": "p5-Studio-PRO Team",
+  "license": "MIT",
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "monaco-editor": "^0.52.0",
+    "vite": "^6.0.0",
+    "wait-on": "^8.0.1"
+  }
+}

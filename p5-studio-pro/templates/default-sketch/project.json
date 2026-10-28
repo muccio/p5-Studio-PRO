@@ -1,0 +1,31 @@
+{
+  "name": "Audio-Reactive Raymarching Studio",
+  "version": "1.0.0",
+  "author": "p5-Studio-PRO",
+  "width": 1280,
+  "height": 720,
+  "fps": 60,
+  "renderer": "webgl",
+  "entry": "sketch.js",
+  "shaders": [
+    {
+      "vert": "effect.vert",
+      "frag": "effect.frag",
+      "includes": ["common.glsl"]
+    }
+  ],
+  "oscBindings": {
+    "u_zoom": {
+      "address": "/shader/zoom",
+      "default": 1.0,
+      "min": 0.2,
+      "max": 4.0
+    },
+    "u_palette": {
+      "address": "/shader/palette",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 5.0
+    }
+  }
+}

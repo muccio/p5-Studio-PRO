@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>p5-Studio-PRO</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body class="app-container">
+
+  <!-- TOP APP HEADER & CONTROLS -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="app-brand">
+        <span class="brand-badge">PRO</span>
+        <span class="brand-title">p5-Studio</span>
+      </div>
+      <button id="btn-open-project" class="btn btn-secondary" title="Open Project Folder">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+        <span id="label-project-name">default-sketch</span>
+      </button>
+    </div>
+
+    <div class="header-center">
+      <button id="btn-restart" class="btn btn-icon" title="Restart Sketch (Cmd/Ctrl + R)">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+      </button>
+      <button id="btn-play-pause" class="btn btn-icon" title="Play/Pause">
+        <svg id="icon-pause" class="icon" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        <svg id="icon-play" class="icon hidden" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+
+      <div class="divider-vertical"></div>
+
+      <!-- Take Recording (Audio + OSC) -->
+      <button id="btn-record-take" class="btn btn-record" title="Record Audio + OSC Take">
+        <span class="record-dot"></span>
+        <span id="label-record-take">Record Take</span>
+      </button>
+      <span id="record-timer" class="record-timer hidden">00:00.0</span>
+
+      <div class="divider-vertical"></div>
+
+      <!-- Video Export Modal Trigger -->
+      <button id="btn-open-export" class="btn btn-primary" title="Deterministic Video Exporter">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+        <span>Export Video</span>
+      </button>
+
+      <div class="divider-vertical"></div>
+
+      <!-- Live Stage Window Controls -->
+      <div class="live-stage-cluster">
+        <button id="btn-toggle-live-window" class="btn btn-live" title="Open / Close Dedicated Live Stage Output (Projector/Display)">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>
+          <span class="live-led"></span>
+          <span id="label-live-btn">Live Stage</span>
+        </button>
+        <select id="select-live-display" class="dropdown dropdown-live" title="Route Live Stage to Display / Projector">
+          <option value="auto">Auto Display</option>
+        </select>
+        <button id="btn-live-fullscreen" class="btn btn-icon btn-subtle hidden" title="Toggle Fullscreen on Live Stage (F11)">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <!-- Live Audio Selector -->
+      <div class="device-selector-wrapper" title="Select Audio Input Device">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+        <select id="audio-device-select" class="dropdown">
+          <option value="default">Default Audio Input</option>
+        </select>
+      </div>
+
+      <!-- OSC Status Pill -->
+      <div id="osc-status-pill" class="status-pill" title="UDP OSC: RX 9000 / TX 9001">
+        <span class="status-indicator active"></span>
+        <span class="status-label">OSC :9000</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN WORKSPACE -->
+  <main class="workspace-layout">
+
+    <!-- LEFT: FILE EXPLORER SIDEBAR -->
+    <aside class="sidebar-left">
+      <div class="sidebar-header">
+        <span class="sidebar-title">PROJECT EXPLORER</span>
+        <div class="sidebar-actions">
+          <button id="btn-new-file" class="btn-action" title="New File">
+            <svg class="icon-small" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"/></svg>
+          </button>
+          <button id="btn-new-folder" class="btn-action" title="New Folder">
+            <svg class="icon-small" viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3v-3h2v3h3v2z"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="file-tree" class="file-tree-container">
+        <!-- Dynamic File Tree Items -->
+      </div>
+    </aside>
+
+    <!-- CENTER: MONACO CODE EDITOR -->
+    <section class="editor-section">
+      <div id="editor-tabs" class="editor-tabs-bar">
+        <!-- Dynamic Open Tabs -->
+      </div>
+      <div id="monaco-container" class="monaco-host"></div>
+      <div id="editor-status-bar" class="editor-status-bar">
+        <span id="status-file-info">sketch.js</span>
+        <span id="status-diagnostics" class="diagnostic-clean">GLSL: OK (No Errors)</span>
+      </div>
+    </section>
+
+    <!-- RIGHT: PREVIEW SANDBOX & AUDIO / OSC INSPECTORS -->
+    <aside class="sidebar-right">
+
+      <!-- LIVE PREVIEW SANDBOX -->
+      <div class="preview-panel">
+        <div class="preview-header">
+          <span class="panel-title">PREVIEW SANDBOX</span>
+          <div class="preview-header-actions">
+            <button id="btn-popout-preview" class="btn-popout" title="Pop Out Preview to Separate Window">
+              <svg class="icon-small" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+              <span id="label-popout-preview">Pop Out</span>
+            </button>
+            <div class="preview-meta">
+              <span id="fps-badge" class="badge">60 FPS</span>
+              <span id="res-badge" class="badge">1280x720</span>
+            </div>
+          </div>
+        </div>
+        <div class="preview-viewport-container">
+          <iframe id="preview-frame" class="preview-frame" allow="autoplay; microphone"></iframe>
+          <div id="preview-docked-notice" class="preview-docked-notice hidden">
+            <div class="docked-icon">
+              <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+            </div>
+            <div class="docked-title">Preview in Separate Window</div>
+            <p class="docked-desc">Running in external floating window. Code and shaders remain in sync.</p>
+            <button id="btn-dock-preview" class="btn btn-secondary btn-sm">Dock back to IDE</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AUDIO-REACTIVE INSPECTOR -->
+      <div class="audio-panel">
+        <div class="panel-header">
+          <span class="panel-title">AUDIO-REACTIVE DSP ENGINE</span>
+          <span id="rms-badge" class="badge-accent">RMS: 0.00</span>
+        </div>
+
+        <!-- FFT & Oscilloscope Canvases -->
+        <div class="visualizer-canvases">
+          <div class="visualizer-box">
+            <span class="vis-label">FFT SPECTRUM (Row 0 u_audioTex)</span>
+            <canvas id="canvas-fft" width="300" height="60"></canvas>
+          </div>
+          <div class="visualizer-box">
+            <span class="vis-label">WAVEFORM (Row 1 u_audioTex)</span>
+            <canvas id="canvas-waveform" width="300" height="60"></canvas>
+          </div>
+        </div>
+
+        <!-- Real-time Band Meters -->
+        <div class="band-meters-grid">
+          <div class="band-meter">
+            <div class="meter-bar-track"><div id="meter-sub" class="meter-bar-fill"></div></div>
+            <span class="meter-name">SUB</span>
+          </div>
+          <div class="band-meter">
+            <div class="meter-bar-track"><div id="meter-bass" class="meter-bar-fill"></div></div>
+            <span class="meter-name">BASS</span>
+          </div>
+          <div class="band-meter">
+            <div class="meter-bar-track"><div id="meter-lowmid" class="meter-bar-fill"></div></div>
+            <span class="meter-name">L-MID</span>
+          </div>
+          <div class="band-meter">
+            <div class="meter-bar-track"><div id="meter-mid" class="meter-bar-fill"></div></div>
+            <span class="meter-name">MID</span>
+          </div>
+          <div class="band-meter">
+            <div class="meter-bar-track"><div id="meter-highmid" class="meter-bar-fill"></div></div>
+            <span class="meter-name">H-MID</span>
+          </div>
+          <div class="band-meter">
+            <div class="meter-bar-track"><div id="meter-treble" class="meter-bar-fill"></div></div>
+            <span class="meter-name">TREB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- OSC MONITOR & UNIFORM INSPECTOR -->
+      <div class="osc-panel">
+        <div class="panel-header">
+          <span class="panel-title">OSC MONITOR & UNIFORMS</span>
+          <span id="osc-rate-badge" class="badge">UDP 9000</span>
+        </div>
+        <div id="osc-log" class="osc-log-container">
+          <div class="osc-entry log-dim">Waiting for incoming OSC packets on port 9000...</div>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- DETERMINISTIC VIDEO EXPORT MODAL -->
+  <div id="export-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">DETERMINISTIC VIDEO EXPORTER</h2>
+        <button id="btn-close-export-modal" class="btn-close">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-description">
+          Frame-by-frame lockstep rendering via FFmpeg. Visuals, WebGL shaders, audio DSP, and recorded OSC replay are guaranteed 100% synchronized with zero dropped frames.
+        </p>
+
+        <div class="export-form-grid">
+          <div class="form-group">
+            <label>Resolution Preset</label>
+            <select id="export-preset-select" class="form-input">
+              <option value="1920x1080">1080p Full HD (1920x1080)</option>
+              <option value="3840x2160">4K Ultra HD (3840x2160)</option>
+              <option value="1280x720">720p HD (1280x720)</option>
+              <option value="1080x1080">1:1 Square (1080x1080)</option>
+              <option value="1080x1920">9:16 Vertical Reel (1080x1920)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Frame Rate (FPS)</label>
+            <select id="export-fps-select" class="form-input">
+              <option value="60">60 FPS (Cinematic High Motion)</option>
+              <option value="30">30 FPS</option>
+              <option value="24">24 FPS (Film Standard)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Duration (Seconds)</label>
+            <input id="export-duration-input" type="number" class="form-input" value="10" min="1" max="600">
+          </div>
+
+          <div class="form-group">
+            <label>Encoding Profile / Codec</label>
+            <select id="export-profile-select" class="form-input">
+              <option value="h264-master">H.264 Master (CRF 15, YUV420P - Broad Compatibility)</option>
+              <option value="h264-chroma-pure">H.264 Chroma-Pure (CRF 14, YUV444P - Sharp Shaders, Zero Bleed)</option>
+              <option value="prores-4444-alpha">Apple ProRes 4444 + Alpha (Transparent Shader Background)</option>
+            </select>
+          </div>
+
+          <div class="form-group full-width">
+            <label>Audio Track (.wav)</label>
+            <div class="input-with-button">
+              <input id="export-audio-path" type="text" class="form-input" placeholder="Optional: /path/to/take_audio.wav" readonly>
+              <button id="btn-browse-audio" class="btn btn-secondary">Select Audio</button>
+            </div>
+          </div>
+
+          <div class="form-group full-width">
+            <label>Recorded OSC Take (.json)</label>
+            <div class="input-with-button">
+              <input id="export-osc-path" type="text" class="form-input" placeholder="Optional: /path/to/take_osc.json" readonly>
+              <button id="btn-browse-osc" class="btn btn-secondary">Select OSC</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Export Progress Bar -->
+        <div id="export-progress-container" class="export-progress-section hidden">
+          <div class="progress-bar-track">
+            <div id="export-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="export-progress-text">Frame 0 / 600 (0.0%)</span>
+            <span id="export-progress-eta">ETA: Calculating...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button id="btn-cancel-export" class="btn btn-secondary hidden">Cancel Export</button>
+        <button id="btn-start-export" class="btn btn-primary">Start Lockstep Export</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- IN-APP INPUT DIALOG MODAL (New File, New Folder, Rename) -->
+  <div id="input-modal" class="modal-overlay hidden">
+    <div class="modal-card small-modal">
+      <div class="modal-header">
+        <h3 id="input-modal-title" class="modal-title">New File</h3>
+        <button id="btn-close-input-modal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label id="input-modal-label">Enter name:</label>
+          <input id="input-modal-value" type="text" class="form-input" placeholder="e.g. custom.frag" autocomplete="off">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-input-modal" class="btn btn-secondary">Cancel</button>
+        <button id="btn-confirm-input-modal" class="btn btn-primary">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

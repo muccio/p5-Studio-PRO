@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Production & Packaging Builds
+dist/
+release/
+build/
+out/
+
+# Application Takes, Audio Recordings & Export Outputs
+.takes/
+.test_take/
+*.test_render.mp4
+*.mp4
+*.wav
+
+# OS metadata
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor & IDE settings
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+build/
+out/
+.takes/
+.test_take/
+*.test_render.mp4
+*.mp4
+*.wav
+.DS_Store
+*.log
