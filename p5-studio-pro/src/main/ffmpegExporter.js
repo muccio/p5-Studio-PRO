@@ -17,7 +17,13 @@ if (typeof ffmpegPath === 'string' && ffmpegPath.includes('app.asar')) {
 }
 
 if (!ffmpegPath || !fs.existsSync(ffmpegPath)) {
-  ffmpegPath = 'ffmpeg'; // fallback to PATH
+  const exeName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const directUnpacked = path.join(process.resourcesPath || '', 'app.asar.unpacked/node_modules/ffmpeg-static', exeName);
+  if (fs.existsSync(directUnpacked)) {
+    ffmpegPath = directUnpacked;
+  } else {
+    ffmpegPath = exeName; // fallback to PATH
+  }
 }
 
 export const EXPORT_PROFILES = {

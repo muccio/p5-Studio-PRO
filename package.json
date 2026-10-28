@@ -7,6 +7,8 @@
     "build": "npm --prefix p5-studio-pro run build",
     "dist:mac": "npm --prefix p5-studio-pro run dist:mac",
     "dist:mac:dir": "npm --prefix p5-studio-pro run dist:mac:dir",
+    "dist:win": "npm --prefix p5-studio-pro run dist:win",
+    "dist:win:dir": "npm --prefix p5-studio-pro run dist:win:dir",
     "start": "npm --prefix p5-studio-pro start",
     "test": "npm --prefix p5-studio-pro test",
     "install": "npm --prefix p5-studio-pro install"

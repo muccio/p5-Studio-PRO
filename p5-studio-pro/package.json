@@ -11,6 +11,8 @@
     "build": "vite build",
     "dist:mac": "vite build && electron-builder --mac",
     "dist:mac:dir": "vite build && electron-builder --mac --dir",
+    "dist:win": "vite build && electron-builder --win",
+    "dist:win:dir": "vite build && electron-builder --win --dir",
     "start": "electron .",
     "test": "node test/verify.js"
   },
@@ -49,6 +51,31 @@
       ],
       "identity": null,
       "hardenedRuntime": false
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "p5-Studio-PRO"
     }
   },
   "keywords": [
