@@ -162,6 +162,20 @@ export class ProjectManager extends EventEmitter {
         }
       }
 
+      // Check for Live Stage Output namespace: /__live/...
+      const isLiveRequest = reqPath === '/__live' || reqPath.startsWith('/__live/');
+      if (isLiveRequest) {
+        reqPath = reqPath.slice(7); // strip '/__live'
+        if (reqPath === '' || reqPath === '/') {
+          reqPath = '/index.html';
+        }
+      }
+
+      // Root directory for this request: either .live_buffer or canonical projectPath!
+      const rootDir = isLiveRequest
+        ? path.join(this.projectPath, '.live_buffer')
+        : this.projectPath;
+
       // Handle Shader Preprocessor API endpoint: /api/shader?file=effect.frag
       if (reqPath === '/api/shader') {
         const fileParam = parsedUrl.searchParams.get('file');
@@ -172,7 +186,7 @@ export class ProjectManager extends EventEmitter {
         }
 
         try {
-          const preprocessed = this.preprocessShader(fileParam);
+          const preprocessed = this.preprocessShader(fileParam, rootDir);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(preprocessed));
         } catch (err) {
@@ -186,10 +200,15 @@ export class ProjectManager extends EventEmitter {
         reqPath = '/index.html';
       }
 
-      const filePath = path.join(this.projectPath, reqPath);
+      let filePath = path.join(rootDir, reqPath);
+
+      // If live buffer request and file doesn't exist yet in buffer, fallback to projectPath
+      if (isLiveRequest && !fs.existsSync(filePath)) {
+        filePath = path.join(this.projectPath, reqPath);
+      }
 
       // Prevent directory traversal
-      if (!filePath.startsWith(this.projectPath)) {
+      if (!filePath.startsWith(rootDir) && !filePath.startsWith(this.projectPath)) {
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         res.end('Forbidden');
         return;
@@ -216,8 +235,8 @@ export class ProjectManager extends EventEmitter {
       // Check if it's a shader file directly requested via HTTP: preprocess it!
       const ext = path.extname(filePath).toLowerCase();
       if (SHADER_EXTENSIONS.has(ext)) {
-        const relativeFile = path.relative(this.projectPath, filePath);
-        const preprocessed = this.preprocessShader(relativeFile);
+        const relativeFile = path.relative(rootDir, filePath);
+        const preprocessed = this.preprocessShader(relativeFile, rootDir);
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end(preprocessed.code);
         return;
@@ -272,7 +291,7 @@ export class ProjectManager extends EventEmitter {
       this.watcher = fs.watch(this.projectPath, { recursive: true }, (eventType, filename) => {
         if (!filename) return;
         // Ignore internal files
-        if (filename.startsWith('.') || filename.includes('node_modules') || filename.includes('.takes')) {
+        if (filename.startsWith('.') || filename.includes('node_modules') || filename.includes('.takes') || filename.includes('.live_buffer')) {
           return;
         }
 
@@ -327,8 +346,8 @@ export class ProjectManager extends EventEmitter {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
 
     for (const entry of entries) {
-      // Ignore hidden files, node_modules, and .takes
-      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.takes') {
+      // Ignore hidden files, node_modules, .takes, and .live_buffer
+      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.takes' || entry.name === '.live_buffer') {
         continue;
       }
 
@@ -357,6 +376,45 @@ export class ProjectManager extends EventEmitter {
     }
 
     return results;
+  }
+
+  /**
+   * Commit/swap the active staging workspace files into the isolated Live Stage buffer (.live_buffer)
+   */
+  commitToLiveBuffer() {
+    if (!this.projectPath || !fs.existsSync(this.projectPath)) return { success: false };
+
+    const bufferDir = path.join(this.projectPath, '.live_buffer');
+    if (!fs.existsSync(bufferDir)) {
+      fs.mkdirSync(bufferDir, { recursive: true });
+    }
+
+    const copyRecursive = (src, dest) => {
+      if (!fs.existsSync(dest)) {
+        fs.mkdirSync(dest, { recursive: true });
+      }
+      const entries = fs.readdirSync(src, { withFileTypes: true });
+      for (const entry of entries) {
+        if (
+          entry.name.startsWith('.') ||
+          entry.name === 'node_modules' ||
+          entry.name === '.takes' ||
+          entry.name === '.live_buffer'
+        ) {
+          continue;
+        }
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+          copyRecursive(srcPath, destPath);
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
+      }
+    };
+
+    copyRecursive(this.projectPath, bufferDir);
+    return { success: true, timestamp: Date.now() };
   }
 
   readFile(relativePath) {
@@ -450,7 +508,7 @@ export class ProjectManager extends EventEmitter {
    * Resolves `#include "path/file.glsl"` directives, injects #line directives,
    * tracks source files, and builds error mapping table.
    */
-  preprocessShader(entryRelativePath) {
+  preprocessShader(entryRelativePath, baseDir = this.projectPath) {
     const sourceTable = []; // Array of filenames: index is sourceStringNumber
     const sourceMap = new Map(); // filename -> sourceStringNumber
 
@@ -468,8 +526,12 @@ export class ProjectManager extends EventEmitter {
     const visitedFiles = new Set();
 
     const resolveIncludes = (filePath, currentDir) => {
-      const absolutePath = path.resolve(currentDir, filePath);
-      const relativeNorm = path.relative(this.projectPath, absolutePath).replace(/\\/g, '/');
+      let absolutePath = path.resolve(currentDir, filePath);
+      if (!fs.existsSync(absolutePath) && baseDir !== this.projectPath) {
+        const fallback = path.resolve(this.projectPath, filePath);
+        if (fs.existsSync(fallback)) absolutePath = fallback;
+      }
+      const relativeNorm = path.relative(baseDir, absolutePath).replace(/\\/g, '/');
 
       if (!fs.existsSync(absolutePath)) {
         throw new Error(`GLSL #include file not found: "${filePath}" (resolved to ${relativeNorm})`);
@@ -509,7 +571,10 @@ export class ProjectManager extends EventEmitter {
       return outputLines.join('\n');
     };
 
-    const entryFullPath = path.resolve(this.projectPath, entryRelativePath);
+    let entryFullPath = path.resolve(baseDir, entryRelativePath);
+    if (!fs.existsSync(entryFullPath) && baseDir !== this.projectPath) {
+      entryFullPath = path.resolve(this.projectPath, entryRelativePath);
+    }
     const entryDir = path.dirname(entryFullPath);
     const code = resolveIncludes(path.basename(entryFullPath), entryDir);
 

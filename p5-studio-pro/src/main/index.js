@@ -220,7 +220,10 @@ async function openLiveWindow(options = {}) {
     console.log(`[LiveWin ${level}] ${message} (${sourceId}:${line})`);
   });
 
-  const liveUrl = `${projectManager.getServerUrl()}/index.html?live=true&t=${Date.now()}`;
+  // Commit/snapshot current project to live buffer before opening Live Stage window
+  projectManager.commitToLiveBuffer();
+
+  const liveUrl = `${projectManager.getServerUrl()}/__live/index.html?live=true&t=${Date.now()}`;
   await liveWindow.loadURL(liveUrl);
   liveWindow.show();
 
@@ -695,6 +698,7 @@ function setupIPC() {
   ipcMain.handle('live:toggleAlwaysOnTop', () => toggleLiveAlwaysOnTop());
   ipcMain.handle('live:pushStage', () => {
     if (liveWindow && !liveWindow.isDestroyed()) {
+      projectManager.commitToLiveBuffer();
       liveWindow.webContents.send('shader:hotReload');
       liveWindow.webContents.reload();
       return true;
@@ -703,6 +707,7 @@ function setupIPC() {
   });
   ipcMain.handle('live:reload', () => {
     if (liveWindow && !liveWindow.isDestroyed()) {
+      projectManager.commitToLiveBuffer();
       liveWindow.webContents.reload();
       return true;
     }
@@ -710,6 +715,7 @@ function setupIPC() {
   });
   ipcMain.handle('live:notifyShaderHotReload', () => {
     if (liveWindow && !liveWindow.isDestroyed()) {
+      projectManager.commitToLiveBuffer();
       liveWindow.webContents.send('shader:hotReload');
       return true;
     }
@@ -864,16 +870,11 @@ app.whenReady().then(async () => {
 
   ffmpegExporter = new FfmpegExporter();
 
-  // Watch for project file changes and notify renderer / preview / live stage
+  // Watch for project file changes and notify renderer / preview
+  // Note: liveWindow is strictly isolated via swap buffer and only updates on explicit push!
   projectManager.on('file:changed', (change) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('project:fileChanged', change);
-    }
-    if (liveWindow && !liveWindow.isDestroyed()) {
-      liveWindow.webContents.send('project:fileChanged', change);
-      if (!change.isShader) {
-        liveWindow.webContents.reload();
-      }
     }
     if (previewWindow && !previewWindow.isDestroyed()) {
       previewWindow.webContents.send('project:fileChanged', change);

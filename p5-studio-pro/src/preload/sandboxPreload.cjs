@@ -711,6 +711,8 @@ class IdeShaderManager {
     // Listen for file change notifications for live hot-reloading
     if (ipcRenderer) {
       ipcRenderer.on('project:fileChanged', (event, change) => {
+        // In Live Stage mode, never auto-reload from un-swapped working files!
+        if (isLiveMode) return;
         if (change.isShader) {
           this.hotReloadAll();
         }

@@ -285,6 +285,10 @@ test('9. Verify p5.js Version Selector, Libraries Catalog, Reference Links and L
   const v = pm.getP5Version();
   assert.ok(typeof v === 'string' && v.length > 0, 'getP5Version must return valid version string');
 
+  const swapRes = pm.commitToLiveBuffer();
+  assert.ok(swapRes && swapRes.success, 'commitToLiveBuffer must succeed');
+  assert.ok(fs.existsSync(path.join(defaultSketchDir, '.live_buffer/sketch.js')), '.live_buffer/sketch.js must exist after swap commit');
+
   const libs = pm.getP5Libraries();
   assert.ok(Array.isArray(libs.catalog) && libs.catalog.length >= 10, 'getP5Libraries must provide rich catalog');
   assert.ok(libs.catalog.some(l => l.id === 'ml5'), 'catalog must contain ml5');
@@ -319,6 +323,7 @@ test('9. Verify p5.js Version Selector, Libraries Catalog, Reference Links and L
   const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
   assert.ok(mainIndexSrc.includes('simpleFullScreen'), 'index.js must configure simpleFullScreen for clean barless fullscreen on macOS');
   assert.ok(mainIndexSrc.includes('live:pushStage'), 'index.js must handle live:pushStage');
+  assert.ok(mainIndexSrc.includes('/__live/index.html'), 'index.js must load Live Stage from isolated /__live/ buffer');
 });
 
 // ----------------------------------------------------
