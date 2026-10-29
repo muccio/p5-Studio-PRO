@@ -301,6 +301,43 @@ if (isExportMode) {
       };
     }
   });
+
+  // Guard p5's shader() to prevent crashes if called before shader sources have finished downloading
+  let _p5Shader = null;
+  Object.defineProperty(window, 'shader', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return _p5Shader;
+    },
+    set(fn) {
+      _p5Shader = function (s) {
+        if (!s || (s._vertSrc === undefined && s._fragSrc === undefined && !s._glProgram)) {
+          return this;
+        }
+        return fn.apply(this, arguments);
+      };
+    }
+  });
+
+  // Automatically pause the draw loop in setup() so deterministic lockstep controls frame advancement
+  let _userSetup = null;
+  Object.defineProperty(window, 'setup', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return _userSetup;
+    },
+    set(fn) {
+      _userSetup = function () {
+        const res = fn.apply(this, arguments);
+        if (typeof window.noLoop === 'function') {
+          window.noLoop();
+        }
+        return res;
+      };
+    }
+  });
 }
 
 // =========================================================================
@@ -866,9 +903,23 @@ class IdeShaderManager {
       p5Shader,
       vertPath,
       fragPath,
-      isCompiling: false
+      isCompiling: false,
+      isReady: false
     };
     this.activeShaders.add(shaderRecord);
+
+    // Pre-fetch shader sources immediately to guarantee synchronous availability during export
+    Promise.all([
+      fetch(vertPath).then(r => r.text()),
+      fetch(fragPath).then(r => r.text())
+    ]).then(([vText, fText]) => {
+      p5Shader._vertSrc = vText;
+      p5Shader._fragSrc = fText;
+      shaderRecord.isReady = true;
+    }).catch(err => {
+      console.warn('[ideShader] Prefetch error:', err);
+    });
+
     return p5Shader;
   }
 
@@ -1035,10 +1086,14 @@ if (isExportMode) {
   Date.now = () => 1700000000000 + Math.floor(virtualTimeMs);
 
   window.addEventListener('load', async () => {
-    // Wait for p5 instance to be mounted
-    let p5Instance = window._p5Instance || window.p5Instance;
-    if (!p5Instance && window.p5 && window.p5.instance) {
-      p5Instance = window.p5.instance;
+    // Poll for p5 instance to be mounted and setup completed
+    let p5Instance = window._p5Instance || window.p5Instance || (window.p5 && window.p5.instance);
+    for (let i = 0; i < 40; i++) {
+      p5Instance = window._p5Instance || window.p5Instance || (window.p5 && window.p5.instance);
+      if (p5Instance && (p5Instance._setupDone || (document.querySelector('canvas') && typeof p5Instance.redraw === 'function'))) {
+        break;
+      }
+      await new Promise(r => setTimeout(r, 50));
     }
 
     // Load offline audio WAV file if provided
@@ -1061,10 +1116,33 @@ if (isExportMode) {
       }
     }
 
+    // Ensure all registered shaders have finished downloading their GLSL sources
+    if (window.ideShader && window.ideShader.activeShaders) {
+      for (const record of window.ideShader.activeShaders) {
+        let attempts = 0;
+        while ((!record.p5Shader._vertSrc || !record.p5Shader._fragSrc) && attempts < 40) {
+          try {
+            const [vText, fText] = await Promise.all([
+              fetch(record.vertPath).then(r => r.text()),
+              fetch(record.fragPath).then(r => r.text())
+            ]);
+            record.p5Shader._vertSrc = vText;
+            record.p5Shader._fragSrc = fText;
+            break;
+          } catch (e) {
+            await new Promise(r => setTimeout(r, 50));
+            attempts++;
+          }
+        }
+      }
+    }
+
     // Lockstep Frame Export Loop
     setTimeout(async () => {
+      // Re-query p5Instance in case it was assigned inside setup()
+      p5Instance = window._p5Instance || window.p5Instance || (window.p5 && window.p5.instance);
       await runLockstepExport(p5Instance);
-    }, 500);
+    }, 200);
   });
 
   async function runLockstepExport(p5Instance) {
@@ -1095,6 +1173,17 @@ if (isExportMode) {
 
     if (activeGLContext) {
       activeGLContext.viewport(0, 0, W, H);
+    }
+
+    // Warmup frame: trigger initial redraw to guarantee shaders and textures are compiled
+    if (p5Instance && p5Instance.redraw) {
+      p5Instance.width = W;
+      p5Instance.height = H;
+      p5Instance.frameCount = 0;
+      p5Instance.redraw();
+      if (activeGLContext) {
+        activeGLContext.finish();
+      }
     }
 
     for (let f = 0; f < exportTotalFrames; f++) {

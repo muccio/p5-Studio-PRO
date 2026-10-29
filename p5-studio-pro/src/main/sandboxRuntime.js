@@ -426,9 +426,23 @@
         p5Shader,
         vertPath,
         fragPath,
-        isCompiling: false
+        isCompiling: false,
+        isReady: false
       };
       this.activeShaders.add(shaderRecord);
+
+      // Pre-fetch shader sources immediately to guarantee availability
+      Promise.all([
+        fetch(vertPath).then(r => r.text()),
+        fetch(fragPath).then(r => r.text())
+      ]).then(([vText, fText]) => {
+        p5Shader._vertSrc = vText;
+        p5Shader._fragSrc = fText;
+        shaderRecord.isReady = true;
+      }).catch(err => {
+        console.warn('[ideShader] Prefetch error:', err);
+      });
+
       return p5Shader;
     }
 
@@ -546,6 +560,24 @@
   window.ideAudio = new IdeAudioEngine();
   window.ideOSC = new IdeOscEngine();
   window.ideShader = new IdeShaderManager();
+
+  // Guard p5's shader() to prevent crashes if called before shader sources have finished downloading
+  let _p5Shader = null;
+  Object.defineProperty(window, 'shader', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return _p5Shader;
+    },
+    set(fn) {
+      _p5Shader = function (s) {
+        if (!s || (s._vertSrc === undefined && s._fragSrc === undefined && !s._glProgram)) {
+          return this;
+        }
+        return fn.apply(this, arguments);
+      };
+    }
+  });
 
   // =========================================================================
   // Sandbox Error Boundary & Visual HUD Overlay with Auto-Recovery
