@@ -443,7 +443,7 @@ export function setupGLSLSupport() {
           range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
           contents: [
             { value: '```glsl\n' + meta.sig + '\n```' },
-            { value: meta.doc }
+            { value: meta.doc + `\n\n[📖 Apri Reference GLSL (The Book of Shaders)](https://thebookofshaders.com/glossary/?search=${encodeURIComponent(word.word)})` }
           ]
         };
       }

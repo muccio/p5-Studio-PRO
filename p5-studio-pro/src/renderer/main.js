@@ -62,16 +62,24 @@ class IDEApp {
 
     // Sketch Playback state
     this.isPaused = false;
+
+    // Live Stage safe staging & manual push state
+    this.isLiveWindowOpen = false;
+    this.isLiveDirty = false;
+    this.pendingLiveType = null;
+    this.hasShaderErrors = false;
   }
 
   async init() {
     setupGLSLSupport();
-    setupWebAndScriptSupport();
     this.initMonaco();
+    setupWebAndScriptSupport(this.editor);
     this.initEventListeners();
     this.initAudioMeters();
     this.initLiveWindowControls();
     this.initPreviewPopoutControls();
+    this.initP5VersionControls();
+    this.initP5LibrariesModal();
 
     // Fetch initial project info and file tree
     if (window.electronAPI) {
@@ -185,7 +193,30 @@ class IDEApp {
       lineNumbers: 'on',
       scrollBeyondLastLine: false,
       renderWhitespace: 'selection',
-      tabSize: 2
+      tabSize: 2,
+      quickSuggestions: {
+        other: true,
+        comments: false,
+        strings: true
+      },
+      quickSuggestionsDelay: 10,
+      suggestOnTriggerCharacters: true,
+      acceptSuggestionOnEnter: 'on',
+      acceptSuggestionOnCommitCharacter: true,
+      snippetSuggestions: 'top',
+      wordBasedSuggestions: 'matchingDocuments',
+      suggest: {
+        showIcons: true,
+        showStatusBar: true,
+        preview: true,
+        previewMode: 'subwordSmart',
+        filterGraceful: true,
+        snippetsPreventQuickSuggestions: false
+      },
+      parameterHints: {
+        enabled: true,
+        cycle: true
+      }
     });
 
     // Auto-save on edit with debounce & instant preview update
@@ -209,14 +240,20 @@ class IDEApp {
             frame.contentWindow.postMessage({ type: 'shader:hotReload' }, '*');
           }
           if (window.electronAPI) {
-            if (window.electronAPI.live) window.electronAPI.live.notifyShaderHotReload();
             if (window.electronAPI.preview) window.electronAPI.preview.notifyShaderHotReload();
+            // In Live mode: do NOT push automatically to the external display; mark dirty for manual push!
+            if (this.isLiveWindowOpen) {
+              this.setLiveStageDirty(true, 'shader');
+            }
           }
         } else if (['js', 'jsx', 'ts', 'tsx', 'html', 'htm', 'css', 'json'].includes(ext)) {
           this.restartPreview();
           if (window.electronAPI) {
-            if (window.electronAPI.live) window.electronAPI.live.reload();
             if (window.electronAPI.preview) window.electronAPI.preview.reload();
+            // In Live mode: do NOT push automatically to the external display; mark dirty for manual push!
+            if (this.isLiveWindowOpen) {
+              this.setLiveStageDirty(true, 'code');
+            }
           }
         }
       }, 250);
@@ -349,6 +386,7 @@ class IDEApp {
       diagSpan.className = 'diagnostic-clean';
       diagSpan.textContent = 'Ready';
       clearModelDiagnostics(this.editor);
+      this.hasShaderErrors = false;
       return;
     }
 
@@ -358,8 +396,10 @@ class IDEApp {
         diagSpan.className = 'diagnostic-clean';
         diagSpan.textContent = `GLSL: OK (#includes resolved: ${res.sourceTable.length} modules)`;
         clearModelDiagnostics(this.editor);
+        this.hasShaderErrors = false;
       }
     } catch (err) {
+      this.hasShaderErrors = true;
       diagSpan.className = 'diagnostic-error';
       diagSpan.textContent = `GLSL Error: ${err.message}`;
       setModelDiagnostics(this.editor, [{ line: 1, message: err.message }]);
@@ -902,6 +942,7 @@ class IDEApp {
     const btnToggle = document.getElementById('btn-toggle-live-window');
     const selectDisplay = document.getElementById('select-live-display');
     const btnFs = document.getElementById('btn-live-fullscreen');
+    const btnPush = document.getElementById('btn-push-live-stage');
 
     // Populate display selector
     await this.loadLiveDisplays();
@@ -911,6 +952,13 @@ class IDEApp {
       btnToggle.addEventListener('click', async () => {
         const displayId = selectDisplay ? selectDisplay.value : 'auto';
         await window.electronAPI.live.toggle({ displayId });
+      });
+    }
+
+    // Push changes to live stage
+    if (btnPush) {
+      btnPush.addEventListener('click', () => {
+        this.pushToLiveStage();
       });
     }
 
@@ -974,17 +1022,260 @@ class IDEApp {
     const btnToggle = document.getElementById('btn-toggle-live-window');
     const label = document.getElementById('label-live-btn');
     const btnFs = document.getElementById('btn-live-fullscreen');
+    const btnPush = document.getElementById('btn-push-live-stage');
 
     if (!btnToggle || !label) return;
 
-    if (status && status.isOpen) {
+    this.isLiveWindowOpen = !!(status && status.isOpen);
+
+    if (this.isLiveWindowOpen) {
       btnToggle.classList.add('active');
       label.textContent = status.isFullscreen ? 'LIVE (FULL)' : 'LIVE ON';
       if (btnFs) btnFs.classList.remove('hidden');
+      if (btnPush) btnPush.classList.remove('hidden');
     } else {
       btnToggle.classList.remove('active');
       label.textContent = 'Live Stage';
       if (btnFs) btnFs.classList.add('hidden');
+      if (btnPush) btnPush.classList.add('hidden');
+      this.setLiveStageDirty(false);
+    }
+  }
+
+  setLiveStageDirty(dirty, type = null) {
+    this.isLiveDirty = dirty;
+    if (dirty && type) this.pendingLiveType = type;
+    const badge = document.getElementById('badge-live-dirty');
+    const btnPush = document.getElementById('btn-push-live-stage');
+    const labelPush = document.getElementById('label-push-stage');
+
+    if (!btnPush) return;
+
+    if (dirty) {
+      if (badge) badge.classList.remove('hidden');
+      btnPush.classList.add('dirty');
+      if (labelPush) labelPush.textContent = 'Invia al Live ●';
+    } else {
+      if (badge) badge.classList.add('hidden');
+      btnPush.classList.remove('dirty');
+      if (labelPush) labelPush.textContent = 'Invia al Live';
+      this.pendingLiveType = null;
+    }
+  }
+
+  async pushToLiveStage() {
+    if (!this.isLiveWindowOpen || !window.electronAPI || !window.electronAPI.live) {
+      return;
+    }
+
+    if (this.hasShaderErrors) {
+      const diagSpan = document.getElementById('status-diagnostics');
+      if (diagSpan) {
+        diagSpan.className = 'diagnostic-error';
+        diagSpan.textContent = '⚠️ Errore sintassi: correggi prima di inviare al Live Stage!';
+      }
+      return;
+    }
+
+    const btnPush = document.getElementById('btn-push-live-stage');
+    const labelPush = document.getElementById('label-push-stage');
+    if (labelPush) labelPush.textContent = 'Invio in corso...';
+
+    try {
+      if (this.pendingLiveType === 'shader') {
+        await window.electronAPI.live.notifyShaderHotReload();
+      } else {
+        await window.electronAPI.live.pushStage();
+      }
+
+      this.setLiveStageDirty(false);
+      if (labelPush) labelPush.textContent = '✓ Inviato!';
+      setTimeout(() => {
+        if (labelPush && !this.isLiveDirty) labelPush.textContent = 'Invia al Live';
+      }, 1500);
+    } catch (err) {
+      console.error('[Live] Push to live stage failed:', err);
+      if (labelPush) labelPush.textContent = 'Errore invio';
+    }
+  }
+
+  // =========================================================================
+  // 10. p5.js Version Controls (like editor.p5js.org)
+  // =========================================================================
+  async initP5VersionControls() {
+    const select = document.getElementById('select-p5-version');
+    if (!select || !window.electronAPI || !window.electronAPI.project) return;
+
+    try {
+      const activeVersion = await window.electronAPI.project.getP5Version();
+      if (activeVersion) {
+        select.value = activeVersion;
+      }
+    } catch (e) {
+      console.warn('[p5Version] Failed to load version:', e);
+    }
+
+    select.addEventListener('change', async () => {
+      const selected = select.value;
+      try {
+        await window.electronAPI.project.setP5Version(selected);
+        const diagSpan = document.getElementById('status-diagnostics');
+        if (diagSpan) {
+          diagSpan.className = 'diagnostic-clean';
+          diagSpan.textContent = `p5.js v${selected} impostata con successo`;
+        }
+        this.restartPreview();
+      } catch (err) {
+        console.error('[p5Version] Failed to switch version:', err);
+        alert(`Errore cambio versione p5.js: ${err.message}`);
+      }
+    });
+  }
+
+  // =========================================================================
+  // 11. p5.js Libraries Catalog & Direct Import Modal
+  // =========================================================================
+  async initP5LibrariesModal() {
+    const btnOpen = document.getElementById('btn-open-libraries');
+    const modal = document.getElementById('libraries-modal');
+    const btnClose = document.getElementById('btn-close-libraries-modal');
+    const btnDone = document.getElementById('btn-done-libraries');
+    const searchInput = document.getElementById('input-search-libraries');
+    const filtersContainer = document.getElementById('libraries-category-filters');
+    const grid = document.getElementById('libraries-grid');
+    const countLabel = document.getElementById('libraries-active-count');
+
+    if (!btnOpen || !modal) return;
+
+    let catalog = [];
+    let enabledLibraries = [];
+    let activeCategory = 'all';
+    let searchQuery = '';
+
+    const renderLibraries = () => {
+      if (!grid) return;
+      grid.innerHTML = '';
+
+      const filtered = catalog.filter((lib) => {
+        const matchCategory = activeCategory === 'all' || lib.category === activeCategory;
+        const matchSearch =
+          !searchQuery ||
+          lib.name.toLowerCase().includes(searchQuery) ||
+          lib.description.toLowerCase().includes(searchQuery) ||
+          lib.category.toLowerCase().includes(searchQuery);
+        return matchCategory && matchSearch;
+      });
+
+      if (countLabel) {
+        countLabel.textContent = `${enabledLibraries.length} libreri${enabledLibraries.length === 1 ? 'a attiva' : 'e attive'}`;
+      }
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div class="libraries-empty">Nessuna libreria trovata per questa ricerca.</div>';
+        return;
+      }
+
+      for (const lib of filtered) {
+        const isEnabled = enabledLibraries.includes(lib.id);
+        const card = document.createElement('div');
+        card.className = `library-card ${isEnabled ? 'enabled' : ''}`;
+        card.innerHTML = `
+          <div class="library-card-header">
+            <div class="library-title-row">
+              <span class="library-name">${lib.name}</span>
+              <span class="library-badge">${lib.category}</span>
+            </div>
+            <button class="btn-toggle-lib ${isEnabled ? 'active' : ''}" title="${isEnabled ? 'Rimuovi dal progetto' : 'Aggiungi al progetto'}">
+              ${isEnabled ? '✓ Attiva' : '+ Aggiungi'}
+            </button>
+          </div>
+          <p class="library-desc">${lib.description}</p>
+          <div class="library-card-footer">
+            <a href="${lib.website}" class="library-link" target="_blank">Documentazione / Esempi ↗</a>
+          </div>
+        `;
+
+        // Toggle button click
+        const toggleBtn = card.querySelector('.btn-toggle-lib');
+        toggleBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const nextState = !enabledLibraries.includes(lib.id);
+          try {
+            await window.electronAPI.project.toggleP5Library(lib.id, nextState);
+            if (nextState) {
+              enabledLibraries.push(lib.id);
+            } else {
+              enabledLibraries = enabledLibraries.filter(id => id !== lib.id);
+            }
+            renderLibraries();
+            this.restartPreview();
+          } catch (err) {
+            console.error('[Libraries] Toggle error:', err);
+            alert(`Errore libreria: ${err.message}`);
+          }
+        });
+
+        // External link click
+        const link = card.querySelector('.library-link');
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.electronAPI && window.electronAPI.system) {
+            window.electronAPI.system.openExternal(lib.website);
+          } else {
+            window.open(lib.website, '_blank');
+          }
+        });
+
+        grid.appendChild(card);
+      }
+    };
+
+    const openModal = async () => {
+      try {
+        if (window.electronAPI && window.electronAPI.project) {
+          const res = await window.electronAPI.project.getP5Libraries();
+          catalog = res.catalog || [];
+          enabledLibraries = res.enabledLibraries || [];
+        }
+        renderLibraries();
+        modal.classList.remove('hidden');
+        if (searchInput) {
+          searchInput.value = '';
+          searchQuery = '';
+          searchInput.focus();
+        }
+      } catch (err) {
+        console.error('[Libraries] Open error:', err);
+      }
+    };
+
+    const closeModal = () => {
+      modal.classList.add('hidden');
+    };
+
+    btnOpen.addEventListener('click', openModal);
+    if (btnClose) btnClose.addEventListener('click', closeModal);
+    if (btnDone) btnDone.addEventListener('click', closeModal);
+
+    // Search input
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        searchQuery = e.target.value.trim().toLowerCase();
+        renderLibraries();
+      });
+    }
+
+    // Category filters
+    if (filtersContainer) {
+      const pills = filtersContainer.querySelectorAll('.pill-filter');
+      pills.forEach((pill) => {
+        pill.addEventListener('click', () => {
+          pills.forEach((p) => p.classList.remove('active'));
+          pill.classList.add('active');
+          activeCategory = pill.dataset.category || 'all';
+          renderLibraries();
+        });
+      });
     }
   }
 
@@ -1061,6 +1352,14 @@ class IDEApp {
   // 11. Event Listeners Wiring
   // =========================================================================
   initEventListeners() {
+    // Global hotkey: Cmd+Enter or Ctrl+Enter -> Push to Live Stage
+    window.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        this.pushToLiveStage();
+      }
+    });
+
     document.getElementById('btn-open-project').addEventListener('click', async () => {
       const res = await window.electronAPI.project.openFolder();
       if (res) {

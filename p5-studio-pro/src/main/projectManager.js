@@ -566,4 +566,321 @@ export class ProjectManager extends EventEmitter {
 
     return errors;
   }
+
+  /**
+   * Get active p5.js version from project configuration or index.html
+   */
+  getP5Version() {
+    if (!this.projectPath) return '1.11.2';
+    const configPath = path.join(this.projectPath, 'project.json');
+    if (fs.existsSync(configPath)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        if (config.p5Version) return config.p5Version;
+      } catch (e) {}
+    }
+
+    const indexPath = path.join(this.projectPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      try {
+        const html = fs.readFileSync(indexPath, 'utf-8');
+        const matchCdn = html.match(/p5\.js\/([0-9\.\-beta]+)\/p5(?:\.min)?\.js/i);
+        if (matchCdn) return matchCdn[1];
+        const matchUnpkg = html.match(/p5@([0-9\.\-beta]+)\/lib\/p5(?:\.min)?\.js/i);
+        if (matchUnpkg) return matchUnpkg[1];
+        if (html.includes('p5.min.js')) return 'local';
+      } catch (e) {}
+    }
+    return '1.11.2';
+  }
+
+  /**
+   * Set p5.js version in project.json and rewrite script tag in index.html
+   */
+  setP5Version(version) {
+    if (!this.projectPath) throw new Error('No active project path set');
+
+    // 1. Update project.json
+    const configPath = path.join(this.projectPath, 'project.json');
+    let config = {};
+    if (fs.existsSync(configPath)) {
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      } catch (e) {
+        config = {};
+      }
+    }
+    config.p5Version = version;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    // 2. Update index.html script tag
+    const indexPath = path.join(this.projectPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      let html = fs.readFileSync(indexPath, 'utf-8');
+      let scriptTag = '';
+      if (version === 'local') {
+        scriptTag = '<script src="./p5.min.js"></script>';
+      } else if (version.startsWith('2.0')) {
+        scriptTag = `<script src="https://unpkg.com/p5@${version}/lib/p5.min.js"></script>`;
+      } else {
+        scriptTag = `<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/${version}/p5.min.js"></script>`;
+      }
+
+      // Replace existing p5 script reference
+      const p5Regex = /<script\s+src=["'][^"']*(?:p5(?:\.min)?\.js|p5@[^"']+)["']\s*><\/script>/i;
+      if (p5Regex.test(html)) {
+        html = html.replace(p5Regex, scriptTag);
+      } else {
+        // Inject before sketch.js or before </head>
+        if (html.includes('<script src="./sketch.js">')) {
+          html = html.replace('<script src="./sketch.js">', `${scriptTag}\n  <script src="./sketch.js">`);
+        } else if (html.includes('</head>')) {
+          html = html.replace('</head>', `  ${scriptTag}\n</head>`);
+        }
+      }
+      fs.writeFileSync(indexPath, html, 'utf-8');
+    }
+
+    return { success: true, version };
+  }
+
+  /**
+   * Get available p5 libraries catalog and currently active libraries in project
+   */
+  getP5Libraries() {
+    let enabledLibraries = [];
+    if (this.projectPath) {
+      const configPath = path.join(this.projectPath, 'project.json');
+      if (fs.existsSync(configPath)) {
+        try {
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+          if (Array.isArray(config.libraries)) {
+            enabledLibraries = config.libraries;
+          }
+        } catch (e) {}
+      }
+
+      const indexPath = path.join(this.projectPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        try {
+          const html = fs.readFileSync(indexPath, 'utf-8');
+          for (const lib of P5_LIBRARIES_CATALOG) {
+            if (!enabledLibraries.includes(lib.id)) {
+              if (html.includes(lib.cdnUrl) || (lib.additionalCdnUrls && lib.additionalCdnUrls.some(u => html.includes(u)))) {
+                enabledLibraries.push(lib.id);
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    return {
+      catalog: P5_LIBRARIES_CATALOG,
+      enabledLibraries
+    };
+  }
+
+  /**
+   * Enable or disable a p5.js library in project.json and index.html
+   */
+  toggleP5Library(libId, enabled) {
+    if (!this.projectPath) throw new Error('No active project path set');
+
+    const lib = P5_LIBRARIES_CATALOG.find(l => l.id === libId);
+    if (!lib) throw new Error(`Library not found: ${libId}`);
+
+    // 1. Update project.json
+    const configPath = path.join(this.projectPath, 'project.json');
+    let config = {};
+    if (fs.existsSync(configPath)) {
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      } catch (e) {
+        config = {};
+      }
+    }
+    if (!Array.isArray(config.libraries)) {
+      config.libraries = [];
+    }
+
+    if (enabled) {
+      if (!config.libraries.includes(libId)) {
+        config.libraries.push(libId);
+      }
+    } else {
+      config.libraries = config.libraries.filter(id => id !== libId);
+    }
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    // 2. Update index.html
+    const indexPath = path.join(this.projectPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      let html = fs.readFileSync(indexPath, 'utf-8');
+      const urls = [lib.cdnUrl, ...(lib.additionalCdnUrls || [])];
+
+      if (enabled) {
+        // Add script tags if missing
+        for (const url of urls) {
+          if (!html.includes(url)) {
+            const scriptTag = `<script src="${url}"></script>`;
+            if (html.includes('<script src="./sketch.js">')) {
+              html = html.replace('<script src="./sketch.js">', `${scriptTag}\n  <script src="./sketch.js">`);
+            } else if (html.includes('</body>')) {
+              html = html.replace('</body>', `  ${scriptTag}\n</body>`);
+            } else {
+              html += `\n${scriptTag}`;
+            }
+          }
+        }
+      } else {
+        // Remove script tags
+        for (const url of urls) {
+          const escaped = url.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const scriptRegex = new RegExp(`[ \\t]*<script\\s+src=["']${escaped}["']\\s*><\\/script>\\r?\\n?`, 'gi');
+          html = html.replace(scriptRegex, '');
+        }
+      }
+      fs.writeFileSync(indexPath, html, 'utf-8');
+    }
+
+    return {
+      success: true,
+      libId,
+      enabled,
+      enabledLibraries: config.libraries
+    };
+  }
 }
+
+export const P5_LIBRARIES_CATALOG = [
+  {
+    id: 'p5.sound',
+    name: 'p5.sound',
+    category: 'Audio & Music',
+    description: 'Libreria audio ufficiale per sintesi sonora, effetti, microfono e analisi FFT.',
+    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.2/addons/p5.sound.min.js',
+    website: 'https://p5js.org/reference/#/libraries/p5.sound'
+  },
+  {
+    id: 'ml5',
+    name: 'ml5.js',
+    category: 'Machine Learning & AI',
+    description: 'Machine Learning accessibile per creative coding: PoseNet, HandPose, FaceMesh e Image Classifier.',
+    cdnUrl: 'https://unpkg.com/ml5@1/dist/ml5.min.js',
+    website: 'https://ml5js.org/'
+  },
+  {
+    id: 'tweakpane',
+    name: 'Tweakpane',
+    category: 'UI & Controls',
+    description: 'Pannello di controllo compatto ed elegante per calibrare parametri e uniform in tempo reale.',
+    cdnUrl: 'https://cdn.jsdelivr.net/npm/tweakpane@4.0.3/dist/tweakpane.min.js',
+    website: 'https://cocopon.github.io/tweakpane/'
+  },
+  {
+    id: 'p5.gui',
+    name: 'p5.gui',
+    category: 'UI & Controls',
+    description: 'Crea automaticamente slider, checkbox e color picker per le variabili dello sketch.',
+    cdnUrl: 'https://cdn.jsdelivr.net/gh/bitcraftlab/p5.gui/libraries/p5.gui.js',
+    website: 'https://github.com/bitcraftlab/p5.gui'
+  },
+  {
+    id: 'p5.brush',
+    name: 'p5.brush',
+    category: 'Generative & Visual FX',
+    description: 'Pennelli artistici digitali in WEBGL: acquerello, acrilico, pennarelli e texture organiche.',
+    cdnUrl: 'https://cdn.jsdelivr.net/npm/p5.brush@latest/dist/p5.brush.min.js',
+    website: 'https://github.com/acamposuribe/p5.brush'
+  },
+  {
+    id: 'p5.scribble',
+    name: 'p5.scribble',
+    category: 'Generative & Visual FX',
+    description: 'Disegna primitive 2D con un look organico fatto a mano stile sketch/bozzetto su carta.',
+    cdnUrl: 'https://cdn.jsdelivr.net/gh/generative-light/p5.scribble.js/p5.scribble.js',
+    website: 'https://github.com/generative-light/p5.scribble.js'
+  },
+  {
+    id: 'p5.glitch',
+    name: 'p5.glitch',
+    category: 'Generative & Visual FX',
+    description: 'Manipolazione glitch art, corruzione di immagini binarie e byte sorting in tempo reale.',
+    cdnUrl: 'https://cdn.jsdelivr.net/npm/p5.glitch@latest/p5.glitch.js',
+    website: 'https://github.com/ffd8/p5.glitch'
+  },
+  {
+    id: 'simplex-noise',
+    name: 'simplex-noise',
+    category: 'Math & Algorithms',
+    description: 'Generatore rapido di rumore coerente Simplex Noise in 2D, 3D e 4D senza discontinuità.',
+    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js',
+    website: 'https://github.com/jwagner/simplex-noise.js'
+  },
+  {
+    id: 'matter-js',
+    name: 'Matter.js',
+    category: 'Physics & Simulation',
+    description: 'Motore fisico 2D per corpi rigidi, collisioni, gravità, molle e vincoli elastici.',
+    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js',
+    website: 'https://brm.io/matter-js/'
+  },
+  {
+    id: 'p5play',
+    name: 'p5.play (v3 / planck)',
+    category: 'Physics & Simulation',
+    description: 'Motore di gioco e fisica con sprite interattivi, hitbox e animazioni.',
+    cdnUrl: 'https://p5play.org/v3/planck.min.js',
+    additionalCdnUrls: ['https://p5play.org/v3/p5play.js'],
+    website: 'https://p5play.org/'
+  },
+  {
+    id: 'p5.serialport',
+    name: 'p5.serialport',
+    category: 'Hardware & IoT',
+    description: 'Comunicazione seriale con Arduino, microcontrollori e sensori fisici esterni.',
+    cdnUrl: 'https://cdn.jsdelivr.net/npm/p5.serialport@latest/lib/p5.serialport.js',
+    website: 'https://github.com/p5-serial/p5.serialport'
+  },
+  {
+    id: 'p5.ble',
+    name: 'p5.ble',
+    category: 'Hardware & IoT',
+    description: 'Comunicazione wireless Bluetooth Low Energy (BLE) con micro:bit, sensori e wearable.',
+    cdnUrl: 'https://unpkg.com/p5.ble@0.0.7/dist/p5.ble.min.js',
+    website: 'https://github.com/ITPNYU/p5.ble'
+  },
+  {
+    id: 'p5.speech',
+    name: 'p5.speech',
+    category: 'Audio & Voice',
+    description: 'Riconoscimento vocale (speech-to-text) e sintesi vocale (text-to-speech) via Web Speech API.',
+    cdnUrl: 'https://cdn.jsdelivr.net/gh/IDMNYU/p5.js-speech@0.0.3/lib/p5.speech.js',
+    website: 'https://github.com/IDMNYU/p5.js-speech'
+  },
+  {
+    id: 'tone',
+    name: 'Tone.js',
+    category: 'Audio & Music',
+    description: 'Framework avanzato Web Audio per sintetizzatori polifonici, sequencing e scheduling musicale.',
+    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js',
+    website: 'https://tonejs.github.io/'
+  },
+  {
+    id: 'dat-gui',
+    name: 'dat.GUI',
+    category: 'UI & Controls',
+    description: 'Controller interfaccia classico e ultraleggero per parametri numerici e booleani.',
+    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js',
+    website: 'https://github.com/dataarts/dat.gui'
+  },
+  {
+    id: 'p5.asciiart',
+    name: 'p5.asciiart',
+    category: 'Generative & Visual FX',
+    description: 'Rendering e conversione di flussi video e canvas in tipografia ASCII art in tempo reale.',
+    cdnUrl: 'https://cdn.jsdelivr.net/gh/pawelniewiadomski/p5.asciiart/p5.asciiart.min.js',
+    website: 'https://github.com/pawelniewiadomski/p5.asciiart'
+  }
+];

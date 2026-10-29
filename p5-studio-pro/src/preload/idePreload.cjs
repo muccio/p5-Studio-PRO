@@ -5,6 +5,11 @@ const { contextBridge, ipcRenderer } = require('electron');
  * Exposes a secure, typed IPC bridge to the renderer
  */
 contextBridge.exposeInMainWorld('electronAPI', {
+  // --- System External Browser ---
+  system: {
+    openExternal: (url) => ipcRenderer.invoke('system:openExternal', url)
+  },
+
   // --- Window Controls ---
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
@@ -24,6 +29,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     renameItem: (oldPath, newPath) => ipcRenderer.invoke('project:renameItem', { oldPath, newPath }),
     loadShader: (filePath) => ipcRenderer.invoke('project:loadShader', { filePath }),
     mapCompilerErrors: (infoLog, sourceTable) => ipcRenderer.invoke('project:mapCompilerErrors', { infoLog, sourceTable }),
+    getP5Version: () => ipcRenderer.invoke('project:getP5Version'),
+    setP5Version: (version) => ipcRenderer.invoke('project:setP5Version', version),
+    getP5Libraries: () => ipcRenderer.invoke('project:getP5Libraries'),
+    toggleP5Library: (libId, enabled) => ipcRenderer.invoke('project:toggleP5Library', { libId, enabled }),
     onFileChanged: (callback) => {
       const listener = (event, data) => callback(data);
       ipcRenderer.on('project:fileChanged', listener);
@@ -60,7 +69,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDisplays: () => ipcRenderer.invoke('live:getDisplays'),
     moveToDisplay: (displayId, fullscreen) => ipcRenderer.invoke('live:moveToDisplay', { displayId, fullscreen }),
     toggleFullscreen: () => ipcRenderer.invoke('live:toggleFullscreen'),
+    exitFullscreen: () => ipcRenderer.invoke('live:exitFullscreen'),
     toggleAlwaysOnTop: () => ipcRenderer.invoke('live:toggleAlwaysOnTop'),
+    pushStage: () => ipcRenderer.invoke('live:pushStage'),
     reload: () => ipcRenderer.invoke('live:reload'),
     notifyShaderHotReload: () => ipcRenderer.invoke('live:notifyShaderHotReload'),
     onStatusChanged: (callback) => {
@@ -80,6 +91,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     open: () => ipcRenderer.invoke('preview:open'),
     close: () => ipcRenderer.invoke('preview:close'),
     toggle: () => ipcRenderer.invoke('preview:toggle'),
+    toggleFullscreen: () => ipcRenderer.invoke('preview:toggleFullscreen'),
+    exitFullscreen: () => ipcRenderer.invoke('preview:exitFullscreen'),
     getStatus: () => ipcRenderer.invoke('preview:getStatus'),
     reload: () => ipcRenderer.invoke('preview:reload'),
     notifyShaderHotReload: () => ipcRenderer.invoke('preview:notifyShaderHotReload'),

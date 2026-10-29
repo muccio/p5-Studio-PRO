@@ -278,6 +278,50 @@ test('8. Verify Syntax Highlighting and Code Hints for HTML, CSS, and universal 
 });
 
 // ----------------------------------------------------
+// 9. Test p5.js Version Selector, Libraries Catalog, Reference Search & Live Push
+// ----------------------------------------------------
+test('9. Verify p5.js Version Selector, Libraries Catalog, Reference Links and Live Stage Push', () => {
+  const pm = new ProjectManager(defaultSketchDir);
+  const v = pm.getP5Version();
+  assert.ok(typeof v === 'string' && v.length > 0, 'getP5Version must return valid version string');
+
+  const libs = pm.getP5Libraries();
+  assert.ok(Array.isArray(libs.catalog) && libs.catalog.length >= 10, 'getP5Libraries must provide rich catalog');
+  assert.ok(libs.catalog.some(l => l.id === 'ml5'), 'catalog must contain ml5');
+  assert.ok(libs.catalog.some(l => l.id === 'tweakpane'), 'catalog must contain tweakpane');
+  assert.ok(libs.catalog.some(l => l.id === 'p5.sound'), 'catalog must contain p5.sound');
+
+  const idePreloadSrc = fs.readFileSync(path.join(projectRoot, 'src/preload/idePreload.cjs'), 'utf-8');
+  assert.ok(idePreloadSrc.includes('system: {'), 'idePreload must expose system namespace');
+  assert.ok(idePreloadSrc.includes('openExternal'), 'idePreload must expose openExternal');
+  assert.ok(idePreloadSrc.includes('setP5Version'), 'idePreload must expose setP5Version');
+  assert.ok(idePreloadSrc.includes('getP5Libraries'), 'idePreload must expose getP5Libraries');
+  assert.ok(idePreloadSrc.includes('toggleP5Library'), 'idePreload must expose toggleP5Library');
+  assert.ok(idePreloadSrc.includes('pushStage'), 'idePreload must expose live pushStage');
+
+  const langServiceSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/ideLanguageService.js'), 'utf-8');
+  assert.ok(langServiceSrc.includes('p5-search-reference'), 'ideLanguageService must register p5 reference search action');
+  assert.ok(langServiceSrc.includes('glsl-search-reference'), 'ideLanguageService must register glsl reference search action');
+  assert.ok(langServiceSrc.includes('P5_REFERENCE_DOCS'), 'ideLanguageService must have P5_REFERENCE_DOCS');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('pushToLiveStage'), 'main.js must implement pushToLiveStage');
+  assert.ok(mainJsSrc.includes('initP5VersionControls'), 'main.js must implement initP5VersionControls');
+  assert.ok(mainJsSrc.includes('initP5LibrariesModal'), 'main.js must implement initP5LibrariesModal');
+  assert.ok(mainJsSrc.includes('quickSuggestions'), 'main.js must configure VSCode-like quickSuggestions');
+
+  const indexHtmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(indexHtmlSrc.includes('select-p5-version'), 'index.html must have select-p5-version');
+  assert.ok(indexHtmlSrc.includes('btn-open-libraries'), 'index.html must have btn-open-libraries');
+  assert.ok(indexHtmlSrc.includes('btn-push-live-stage'), 'index.html must have btn-push-live-stage');
+  assert.ok(indexHtmlSrc.includes('libraries-modal'), 'index.html must have libraries-modal');
+
+  const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainIndexSrc.includes('simpleFullScreen'), 'index.js must configure simpleFullScreen for clean barless fullscreen on macOS');
+  assert.ok(mainIndexSrc.includes('live:pushStage'), 'index.js must handle live:pushStage');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

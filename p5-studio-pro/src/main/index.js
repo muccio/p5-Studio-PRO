@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -201,6 +201,8 @@ async function openLiveWindow(options = {}) {
     x: bounds ? bounds.x : undefined,
     y: bounds ? bounds.y : undefined,
     fullscreen: !!options.fullscreen,
+    simpleFullScreen: process.platform === 'darwin',
+    fullscreenable: true,
     alwaysOnTop: !!options.alwaysOnTop,
     backgroundColor: '#000000',
     autoHideMenuBar: true,
@@ -222,7 +224,10 @@ async function openLiveWindow(options = {}) {
   await liveWindow.loadURL(liveUrl);
   liveWindow.show();
 
-  liveWindow.on('enter-full-screen', () => notifyLiveStatus());
+  liveWindow.on('enter-full-screen', () => {
+    liveWindow.setMenuBarVisibility(false);
+    notifyLiveStatus();
+  });
   liveWindow.on('leave-full-screen', () => notifyLiveStatus());
   liveWindow.on('always-on-top-changed', () => notifyLiveStatus());
 
@@ -257,12 +262,16 @@ function moveLiveWindowToDisplay(displayId, fullscreen = false) {
   const displays = screen.getAllDisplays();
   const d = displays.find(disp => String(disp.id) === String(displayId));
   if (d) {
-    if (liveWindow.isFullScreen()) {
-      liveWindow.setFullScreen(false);
+    if (liveWindow.isFullScreen() || (process.platform === 'darwin' && liveWindow.isSimpleFullScreen())) {
+      exitLiveFullscreen();
     }
     liveWindow.setBounds(d.bounds);
     if (fullscreen) {
-      liveWindow.setFullScreen(true);
+      if (process.platform === 'darwin') {
+        liveWindow.setSimpleFullScreen(true);
+      } else {
+        liveWindow.setFullScreen(true);
+      }
     }
     notifyLiveStatus();
   }
@@ -270,10 +279,29 @@ function moveLiveWindowToDisplay(displayId, fullscreen = false) {
 
 function toggleLiveFullscreen() {
   if (liveWindow && !liveWindow.isDestroyed()) {
-    const nextState = !liveWindow.isFullScreen();
-    liveWindow.setFullScreen(nextState);
+    const isFs = process.platform === 'darwin' ? liveWindow.isSimpleFullScreen() : liveWindow.isFullScreen();
+    const nextState = !isFs;
+    if (process.platform === 'darwin') {
+      liveWindow.setSimpleFullScreen(nextState);
+    } else {
+      liveWindow.setFullScreen(nextState);
+    }
+    liveWindow.setMenuBarVisibility(!nextState);
     notifyLiveStatus();
     return nextState;
+  }
+  return false;
+}
+
+function exitLiveFullscreen() {
+  if (liveWindow && !liveWindow.isDestroyed()) {
+    if (process.platform === 'darwin') {
+      liveWindow.setSimpleFullScreen(false);
+    } else {
+      liveWindow.setFullScreen(false);
+    }
+    notifyLiveStatus();
+    return false;
   }
   return false;
 }
@@ -290,9 +318,12 @@ function toggleLiveAlwaysOnTop() {
 
 function getLiveWindowStatus() {
   const isOpen = !!liveWindow && !liveWindow.isDestroyed();
+  const isFullscreen = isOpen
+    ? (process.platform === 'darwin' ? liveWindow.isSimpleFullScreen() : liveWindow.isFullScreen())
+    : false;
   return {
     isOpen,
-    isFullscreen: isOpen ? liveWindow.isFullScreen() : false,
+    isFullscreen,
     isAlwaysOnTop: isOpen ? liveWindow.isAlwaysOnTop() : false
   };
 }
@@ -321,6 +352,8 @@ async function openPreviewWindow() {
     minHeight: 300,
     backgroundColor: '#0a0d14',
     autoHideMenuBar: true,
+    simpleFullScreen: process.platform === 'darwin',
+    fullscreenable: true,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/sandboxPreload.cjs'),
@@ -339,6 +372,12 @@ async function openPreviewWindow() {
   await previewWindow.loadURL(previewUrl);
   previewWindow.show();
 
+  previewWindow.on('enter-full-screen', () => {
+    previewWindow.setMenuBarVisibility(false);
+    notifyPreviewStatus();
+  });
+  previewWindow.on('leave-full-screen', () => notifyPreviewStatus());
+
   previewWindow.on('closed', () => {
     previewWindow = null;
     notifyPreviewStatus();
@@ -346,6 +385,35 @@ async function openPreviewWindow() {
 
   notifyPreviewStatus();
   return getPreviewWindowStatus();
+}
+
+function togglePreviewFullscreen() {
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    const isFs = process.platform === 'darwin' ? previewWindow.isSimpleFullScreen() : previewWindow.isFullScreen();
+    const nextState = !isFs;
+    if (process.platform === 'darwin') {
+      previewWindow.setSimpleFullScreen(nextState);
+    } else {
+      previewWindow.setFullScreen(nextState);
+    }
+    previewWindow.setMenuBarVisibility(!nextState);
+    notifyPreviewStatus();
+    return nextState;
+  }
+  return false;
+}
+
+function exitPreviewFullscreen() {
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    if (process.platform === 'darwin') {
+      previewWindow.setSimpleFullScreen(false);
+    } else {
+      previewWindow.setFullScreen(false);
+    }
+    notifyPreviewStatus();
+    return false;
+  }
+  return false;
 }
 
 function closePreviewWindow() {
@@ -451,6 +519,31 @@ function setupIPC() {
 
   ipcMain.handle('project:mapCompilerErrors', (event, { infoLog, sourceTable }) => {
     return projectManager.mapCompilerErrors(infoLog, sourceTable);
+  });
+
+  ipcMain.handle('project:getP5Version', () => {
+    return projectManager.getP5Version();
+  });
+
+  ipcMain.handle('project:setP5Version', (event, version) => {
+    return projectManager.setP5Version(version);
+  });
+
+  ipcMain.handle('project:getP5Libraries', () => {
+    return projectManager.getP5Libraries();
+  });
+
+  ipcMain.handle('project:toggleP5Library', (event, { libId, enabled }) => {
+    return projectManager.toggleP5Library(libId, enabled);
+  });
+
+  // --- System External Browser IPC ---
+  ipcMain.handle('system:openExternal', async (event, url) => {
+    if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+      await shell.openExternal(url);
+      return true;
+    }
+    return false;
   });
 
   // --- OSC Bridge ---
@@ -598,7 +691,16 @@ function setupIPC() {
   ipcMain.handle('live:getDisplays', () => getDisplays());
   ipcMain.handle('live:moveToDisplay', (event, { displayId, fullscreen }) => moveLiveWindowToDisplay(displayId, fullscreen));
   ipcMain.handle('live:toggleFullscreen', () => toggleLiveFullscreen());
+  ipcMain.handle('live:exitFullscreen', () => exitLiveFullscreen());
   ipcMain.handle('live:toggleAlwaysOnTop', () => toggleLiveAlwaysOnTop());
+  ipcMain.handle('live:pushStage', () => {
+    if (liveWindow && !liveWindow.isDestroyed()) {
+      liveWindow.webContents.send('shader:hotReload');
+      liveWindow.webContents.reload();
+      return true;
+    }
+    return false;
+  });
   ipcMain.handle('live:reload', () => {
     if (liveWindow && !liveWindow.isDestroyed()) {
       liveWindow.webContents.reload();
@@ -618,6 +720,8 @@ function setupIPC() {
   ipcMain.handle('preview:open', () => openPreviewWindow());
   ipcMain.handle('preview:close', () => closePreviewWindow());
   ipcMain.handle('preview:toggle', () => togglePreviewWindow());
+  ipcMain.handle('preview:toggleFullscreen', () => togglePreviewFullscreen());
+  ipcMain.handle('preview:exitFullscreen', () => exitPreviewFullscreen());
   ipcMain.handle('preview:getStatus', () => getPreviewWindowStatus());
   ipcMain.handle('preview:reload', () => {
     if (previewWindow && !previewWindow.isDestroyed()) {

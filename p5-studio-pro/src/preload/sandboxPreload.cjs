@@ -81,6 +81,9 @@ if (isLiveMode) {
     if (e.key === 'F11') {
       e.preventDefault();
       if (ipcRenderer) ipcRenderer.invoke('live:toggleFullscreen');
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (ipcRenderer) ipcRenderer.invoke('live:exitFullscreen');
     }
   });
 }
@@ -107,6 +110,21 @@ if (isPopoutMode) {
     `;
     document.head.appendChild(style);
   });
+
+  // Double click or F11 toggles Fullscreen on Popout Preview window
+  window.addEventListener('dblclick', () => {
+    if (ipcRenderer) ipcRenderer.invoke('preview:toggleFullscreen');
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'F11') {
+      e.preventDefault();
+      if (ipcRenderer) ipcRenderer.invoke('preview:toggleFullscreen');
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (ipcRenderer) ipcRenderer.invoke('preview:exitFullscreen');
+    }
+  });
 }
 
 if (isExportMode) {
@@ -124,6 +142,21 @@ if (isExportMode) {
       canvas { width: ${exportTargetW}px !important; height: ${exportTargetH}px !important; display: block !important; object-fit: fill !important; }
     `;
     document.head.appendChild(style);
+  });
+
+  // Double click or F11 toggles Fullscreen on Popout Preview window
+  window.addEventListener('dblclick', () => {
+    if (ipcRenderer) ipcRenderer.invoke('preview:toggleFullscreen');
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'F11') {
+      e.preventDefault();
+      if (ipcRenderer) ipcRenderer.invoke('preview:toggleFullscreen');
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (ipcRenderer) ipcRenderer.invoke('preview:exitFullscreen');
+    }
   });
 
   // Intercept p5's createCanvas to force exact export target dimensions & pixelDensity(1)

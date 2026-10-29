@@ -41,6 +41,34 @@
 
       <div class="divider-vertical"></div>
 
+      <!-- p5.js Version Selector (like editor.p5js.org) -->
+      <div class="p5-version-wrapper" title="Seleziona la versione di p5.js per questo progetto (come su editor.p5js.org)">
+        <span class="p5-badge">p5*</span>
+        <select id="select-p5-version" class="dropdown dropdown-p5">
+          <option value="1.11.2">1.11.2 (Latest 1.x)</option>
+          <option value="1.11.1">1.11.1</option>
+          <option value="1.11.0">1.11.0</option>
+          <option value="1.10.0">1.10.0</option>
+          <option value="1.9.4">1.9.4</option>
+          <option value="1.9.0">1.9.0</option>
+          <option value="1.8.0">1.8.0</option>
+          <option value="1.7.0">1.7.0</option>
+          <option value="1.6.0">1.6.0</option>
+          <option value="1.5.0">1.5.0</option>
+          <option value="1.4.2">1.4.2</option>
+          <option value="2.0.0-beta.2">2.0.0-beta.2 (p5.js 2.0)</option>
+          <option value="local">Locale (Offline)</option>
+        </select>
+      </div>
+
+      <!-- p5.js Libraries Manager Trigger -->
+      <button id="btn-open-libraries" class="btn btn-secondary" title="Importa e gestisci librerie p5.js nel progetto (ml5, sound, gui, tweakpane...)">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>
+        <span>Librerie p5</span>
+      </button>
+
+      <div class="divider-vertical"></div>
+
       <!-- Video Export Modal Trigger -->
       <button id="btn-open-export" class="btn btn-primary" title="Deterministic Video Exporter">
         <svg class="icon" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
@@ -49,17 +77,22 @@
 
       <div class="divider-vertical"></div>
 
-      <!-- Live Stage Window Controls -->
+      <!-- Live Stage Window Controls with Safe Staging & Manual Push -->
       <div class="live-stage-cluster">
-        <button id="btn-toggle-live-window" class="btn btn-live" title="Open / Close Dedicated Live Stage Output (Projector/Display)">
+        <button id="btn-toggle-live-window" class="btn btn-live" title="Apri / Chiudi Uscita Live Stage su Display/Proiettore esterno">
           <svg class="icon" viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>
           <span class="live-led"></span>
           <span id="label-live-btn">Live Stage</span>
         </button>
-        <select id="select-live-display" class="dropdown dropdown-live" title="Route Live Stage to Display / Projector">
+        <select id="select-live-display" class="dropdown dropdown-live" title="Indirizza Live Stage su Monitor / Proiettore">
           <option value="auto">Auto Display</option>
         </select>
-        <button id="btn-live-fullscreen" class="btn btn-icon btn-subtle hidden" title="Toggle Fullscreen on Live Stage (F11)">
+        <button id="btn-push-live-stage" class="btn btn-push-stage hidden" title="Invia modifiche correnti alla finestra Live Stage (Cmd/Ctrl + Enter)">
+          <svg class="icon-small" viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+          <span id="label-push-stage">Invia al Live</span>
+          <span id="badge-live-dirty" class="badge-dirty hidden">●</span>
+        </button>
+        <button id="btn-live-fullscreen" class="btn btn-icon btn-subtle hidden" title="A tutto schermo senza barre sul Live Stage (F11 / Doppio Click)">
           <svg class="icon" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
         </button>
       </div>
@@ -309,6 +342,40 @@
       <div class="modal-footer">
         <button id="btn-cancel-input-modal" class="btn btn-secondary">Cancel</button>
         <button id="btn-confirm-input-modal" class="btn btn-primary">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- P5.JS LIBRARIES CATALOG MODAL -->
+  <div id="libraries-modal" class="modal-overlay hidden">
+    <div class="modal-card libraries-modal-card">
+      <div class="modal-header">
+        <div class="modal-header-titles">
+          <h3 class="modal-title">Librerie p5.js</h3>
+          <span class="modal-subtitle">Importa con un click librerie creative coding nel progetto</span>
+        </div>
+        <button id="btn-close-libraries-modal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="libraries-toolbar">
+          <input id="input-search-libraries" type="text" class="form-input search-input" placeholder="Cerca libreria (es. sound, ml5, tweakpane, glitch)...">
+          <div id="libraries-category-filters" class="category-filters">
+            <button class="pill-filter active" data-category="all">Tutte</button>
+            <button class="pill-filter" data-category="Audio & Music">Audio</button>
+            <button class="pill-filter" data-category="Machine Learning & AI">AI / ML</button>
+            <button class="pill-filter" data-category="UI & Controls">UI / Controlli</button>
+            <button class="pill-filter" data-category="Generative & Visual FX">Visual FX</button>
+            <button class="pill-filter" data-category="Physics & Simulation">Fisica</button>
+            <button class="pill-filter" data-category="Hardware & IoT">Hardware</button>
+          </div>
+        </div>
+        <div id="libraries-grid" class="libraries-grid">
+          <!-- Dynamic Library Cards -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span id="libraries-active-count" class="libraries-count-label">0 librerie attive</span>
+        <button id="btn-done-libraries" class="btn btn-primary">Fatto</button>
       </div>
     </div>
   </div>
