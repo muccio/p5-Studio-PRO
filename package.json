@@ -1,6 +1,6 @@
 {
   "name": "p5-studio-pro-workspace",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Production-ready cross-platform desktop IDE for p5.js and GLSL Shaders",
   "scripts": {
     "dev": "npm --prefix p5-studio-pro run dev",
