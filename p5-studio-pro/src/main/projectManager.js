@@ -127,12 +127,13 @@ export class ProjectManager extends EventEmitter {
    * Request handler for local project HTTP server
    */
   _handleHttpRequest(req, res) {
-    // Enable CORS and Cross-Origin isolation headers for SharedArrayBuffer / AudioWorklet
+    // Enable CORS and Cross-Origin isolation headers for SharedArrayBuffer / AudioWorklet without blocking CDN scripts
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
     res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+    res.setHeader('Timing-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
 
     if (req.method === 'OPTIONS') {
@@ -268,6 +269,8 @@ export class ProjectManager extends EventEmitter {
             html = injection + html;
           }
         }
+        // Ensure all external scripts have crossorigin="anonymous" to prevent browser "Script error." masking
+        html = html.replace(/<script\s+src="(https:\/\/[^"]+)"(?!\s+crossorigin)>/gi, '<script src="$1" crossorigin="anonymous">');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
         return;
@@ -686,13 +689,13 @@ export class ProjectManager extends EventEmitter {
       if (version === 'local') {
         scriptTag = '<script src="./p5.min.js"></script>';
       } else if (version.startsWith('2.0')) {
-        scriptTag = `<script src="https://unpkg.com/p5@${version}/lib/p5.min.js"></script>`;
+        scriptTag = `<script src="https://unpkg.com/p5@${version}/lib/p5.min.js" crossorigin="anonymous"></script>`;
       } else {
-        scriptTag = `<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/${version}/p5.min.js"></script>`;
+        scriptTag = `<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/${version}/p5.min.js" crossorigin="anonymous"></script>`;
       }
 
       // Replace existing p5 script reference
-      const p5Regex = /<script\s+src=["'][^"']*(?:p5(?:\.min)?\.js|p5@[^"']+)["']\s*><\/script>/i;
+      const p5Regex = /<script\s+[^>]*src=["'][^"']*(?:p5(?:\.min)?\.js|p5@[^"']+)["'][^>]*><\/script>/i;
       if (p5Regex.test(html)) {
         html = html.replace(p5Regex, scriptTag);
       } else {
@@ -788,7 +791,7 @@ export class ProjectManager extends EventEmitter {
         // Add script tags if missing
         for (const url of urls) {
           if (!html.includes(url)) {
-            const scriptTag = `<script src="${url}"></script>`;
+            const scriptTag = `<script src="${url}" crossorigin="anonymous"></script>`;
             if (html.includes('<script src="./sketch.js">')) {
               html = html.replace('<script src="./sketch.js">', `${scriptTag}\n  <script src="./sketch.js">`);
             } else if (html.includes('</body>')) {

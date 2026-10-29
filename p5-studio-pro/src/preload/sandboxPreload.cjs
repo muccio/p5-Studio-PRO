@@ -141,7 +141,7 @@ if (!isExportMode && !isLiveMode) {
         bottom: 16px;
         left: 16px;
         right: 16px;
-        max-width: 560px;
+        max-width: 580px;
         z-index: 9999999;
         background: rgba(30, 8, 12, 0.95);
         backdrop-filter: blur(8px);
@@ -164,6 +164,7 @@ if (!isExportMode && !isLiveMode) {
 
       const closeBtn = document.createElement('button');
       closeBtn.innerHTML = '&times;';
+      closeBtn.title = 'Chiudi notifica errore';
       closeBtn.style.cssText = `
         background: none;
         border: none;
@@ -174,7 +175,12 @@ if (!isExportMode && !isLiveMode) {
         padding: 0 0 0 12px;
         margin: 0;
       `;
-      closeBtn.onclick = () => overlay.remove();
+      closeBtn.onclick = () => {
+        overlay.remove();
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'runtime:success' }, '*');
+        }
+      };
       overlay.appendChild(closeBtn);
 
       const parent = document.body || document.documentElement;
@@ -183,22 +189,34 @@ if (!isExportMode && !isLiveMode) {
 
     const content = document.getElementById('studio-sandbox-error-content');
     if (content) {
-      const filename = source ? source.split('/').pop() : 'sketch.js';
-      const loc = line ? `:${line}${col ? `:${col}` : ''}` : '';
+      let displaySource = source ? source.split('/').pop() : 'sketch.js';
+      let displayMsg = msg;
+      if (msg === 'Script error.' && (!line || line === 0)) {
+        displaySource = 'CDN / Script Esterno';
+        displayMsg = 'Possibile incompatibilità o errore di caricamento nella versione p5.js selezionata. Seleziona una versione stabile (es. 1.11.2) dal menu a tendina.';
+      }
+      const loc = line && line > 0 ? `:${line}${col ? `:${col}` : ''}` : '';
       content.innerHTML = `
         <div style="font-weight: bold; color: #ff3366; margin-bottom: 2px;">
-          ⚠️ Errore Runtime / Sintassi (${filename}${loc})
+          ⚠️ Errore Runtime / Sintassi (${displaySource}${loc})
         </div>
-        <div style="color: #ffe6ec; word-break: break-word;">${msg}</div>
+        <div style="color: #ffe6ec; word-break: break-word;">${displayMsg}</div>
       `;
     }
   }
 
+  function clearSandboxErrorOverlay() {
+    const overlay = document.getElementById('studio-sandbox-error-overlay');
+    if (overlay) overlay.remove();
+  }
+
+  clearSandboxErrorOverlay();
+
   window.addEventListener('error', (event) => {
     const msg = event.message || 'Script execution error';
-    const source = event.filename || 'sketch.js';
-    const line = event.lineno;
-    const col = event.colno;
+    const source = event.filename || (msg === 'Script error.' ? 'CDN' : 'sketch.js');
+    const line = event.lineno || 0;
+    const col = event.colno || 0;
 
     showSandboxErrorOverlay(msg, source, line, col);
 
@@ -226,6 +244,10 @@ if (!isExportMode && !isLiveMode) {
         colno: 0
       }, '*');
     }
+  });
+
+  window.addEventListener('DOMContentLoaded', () => {
+    clearSandboxErrorOverlay();
   });
 }
 

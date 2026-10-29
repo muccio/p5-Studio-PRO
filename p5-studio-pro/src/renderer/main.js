@@ -5,7 +5,7 @@ import 'monaco-editor/esm/vs/language/html/monaco.contribution';
 import 'monaco-editor/esm/vs/language/css/monaco.contribution';
 import 'monaco-editor/esm/vs/language/typescript/monaco.contribution';
 import { setupGLSLSupport, setModelDiagnostics, clearModelDiagnostics, isShaderFile } from './glslMonacoSetup.js';
-import { setupWebAndScriptSupport } from './ideLanguageService.js';
+import { setupWebAndScriptSupport, P5_REFERENCE_DOCS, getCategoryForSymbol } from './ideLanguageService.js';
 
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
@@ -38,6 +38,7 @@ self.MonacoEnvironment = {
 
 class IDEApp {
   constructor() {
+    window.p5StudioApp = this;
     this.projectInfo = null;
     this.openFiles = new Map(); // relativePath -> { model, viewState, isDirty }
     this.activeFilePath = null;
@@ -81,6 +82,7 @@ class IDEApp {
     this.initPreviewPopoutControls();
     this.initP5VersionControls();
     this.initP5LibrariesModal();
+    this.initP5ReferenceModal();
 
     // Fetch initial project info and file tree
     if (window.electronAPI) {
@@ -349,6 +351,11 @@ class IDEApp {
     }
     this.editor.focus();
 
+    // Clear stale markers when switching or opening tabs
+    if (fileRecord.model) {
+      monaco.editor.setModelMarkers(fileRecord.model, 'p5-runtime', []);
+    }
+
     document.getElementById('status-file-info').textContent = relativePath;
     this.renderTabs();
     this.highlightActiveTreeItem();
@@ -459,6 +466,7 @@ class IDEApp {
 
       this.hasJsErrors = false;
       monaco.editor.setModelMarkers(model, 'js-syntax', []);
+      monaco.editor.setModelMarkers(model, 'p5-runtime', []);
       const diagSpan = document.getElementById('status-diagnostics');
       if (diagSpan && !this.hasShaderErrors) {
         diagSpan.className = 'diagnostic-clean';
@@ -599,16 +607,17 @@ class IDEApp {
         document.getElementById('status-diagnostics').className = 'diagnostic-clean';
         document.getElementById('status-diagnostics').textContent = 'GLSL: OK (Live Hot-Reloaded)';
       } else if (data.type === 'runtime:error') {
+        const isGenericScriptError = data.message === 'Script error.' || !data.lineno || data.lineno <= 0;
         this.hasJsErrors = true;
         const diagSpan = document.getElementById('status-diagnostics');
         if (diagSpan) {
           diagSpan.className = 'diagnostic-error';
-          const loc = data.lineno ? ` (L${data.lineno})` : '';
+          const loc = !isGenericScriptError && data.lineno ? ` (L${data.lineno})` : '';
           diagSpan.textContent = `JS Error: ${data.message}${loc}`;
         }
-        if (data.lineno && this.editor && this.activeFilePath && this.activeFilePath.endsWith('.js')) {
+        if (!isGenericScriptError && data.lineno && this.editor && this.activeFilePath && this.activeFilePath.endsWith('.js')) {
           const model = this.editor.getModel();
-          if (model) {
+          if (model && data.lineno <= model.getLineCount()) {
             monaco.editor.setModelMarkers(model, 'p5-runtime', [{
               startLineNumber: data.lineno,
               startColumn: data.colno || 1,
@@ -629,6 +638,7 @@ class IDEApp {
           }
           if (this.editor && this.editor.getModel()) {
             monaco.editor.setModelMarkers(this.editor.getModel(), 'p5-runtime', []);
+            monaco.editor.setModelMarkers(this.editor.getModel(), 'js-syntax', []);
           }
         }
       } else if (data.type === 'audio:update') {
@@ -638,6 +648,15 @@ class IDEApp {
   }
 
   restartPreview() {
+    this.hasJsErrors = false;
+    if (this.editor && this.editor.getModel()) {
+      monaco.editor.setModelMarkers(this.editor.getModel(), 'p5-runtime', []);
+    }
+    const diagSpan = document.getElementById('status-diagnostics');
+    if (diagSpan && !this.hasShaderErrors) {
+      diagSpan.className = 'diagnostic-clean';
+      diagSpan.textContent = 'Ready';
+    }
     const frame = document.getElementById('preview-frame');
     if (frame) {
       if (this.projectInfo && this.projectInfo.serverUrl) {
@@ -1392,6 +1411,219 @@ class IDEApp {
           pill.classList.add('active');
           activeCategory = pill.dataset.category || 'all';
           renderLibraries();
+        });
+      });
+    }
+  }
+
+  // =========================================================================
+  // 12. p5.js Reference Explorer & Fast Code Injection Modal
+  // =========================================================================
+  initP5ReferenceModal() {
+    const btnOpen = document.getElementById('btn-open-reference');
+    const modal = document.getElementById('reference-modal');
+    const btnClose = document.getElementById('btn-close-reference-modal');
+    const btnDone = document.getElementById('btn-done-reference');
+    const searchInput = document.getElementById('input-search-reference');
+    const btnClearSearch = document.getElementById('btn-clear-search-reference');
+    const filtersContainer = document.getElementById('reference-category-filters');
+    const grid = document.getElementById('reference-results-grid');
+    const countLabel = document.getElementById('reference-results-count');
+    const btnOfficial = document.getElementById('btn-open-official-ref');
+
+    if (!modal) return;
+
+    let activeCategory = 'all';
+    let searchQuery = '';
+
+    const allSymbols = Object.keys(P5_REFERENCE_DOCS).map((key) => {
+      const item = P5_REFERENCE_DOCS[key];
+      return {
+        name: key,
+        syntax: item.syntax || key,
+        desc: item.desc || '',
+        category: getCategoryForSymbol(key)
+      };
+    });
+
+    const renderReference = () => {
+      if (!grid) return;
+      grid.innerHTML = '';
+
+      const filtered = allSymbols.filter((sym) => {
+        const matchCategory = activeCategory === 'all' || sym.category === activeCategory;
+        const matchSearch =
+          !searchQuery ||
+          sym.name.toLowerCase().includes(searchQuery) ||
+          sym.desc.toLowerCase().includes(searchQuery) ||
+          sym.syntax.toLowerCase().includes(searchQuery) ||
+          sym.category.toLowerCase().includes(searchQuery);
+        return matchCategory && matchSearch;
+      });
+
+      if (countLabel) {
+        countLabel.textContent = `Visualizzazione di ${filtered.length} ${filtered.length === 1 ? 'voce' : 'voci'}${activeCategory !== 'all' ? ` in "${activeCategory}"` : ''}${searchQuery ? ` per "${searchQuery}"` : ''}`;
+      }
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div class="reference-empty">Nessuna funzione o costante trovata per questa ricerca.</div>';
+        return;
+      }
+
+      for (const sym of filtered) {
+        const card = document.createElement('div');
+        card.className = 'reference-card';
+        card.innerHTML = `
+          <div class="reference-card-header">
+            <span class="reference-sym-name">${sym.name}</span>
+            <span class="reference-category-pill">${sym.category}</span>
+          </div>
+          <div class="reference-syntax-block">
+            <code>${sym.syntax}</code>
+            <button class="btn-copy-syntax" title="Copia sintassi negli appunti">Copia</button>
+          </div>
+          <p class="reference-desc">${sym.desc}</p>
+          <div class="reference-card-actions">
+            <button class="btn btn-secondary btn-insert-code" title="Inserisci questa istruzione nell'editor alla posizione corrente">
+              <svg class="icon-small" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              <span>Inserisci nell'Editor</span>
+            </button>
+            <button class="btn btn-subtle btn-external-ref" title="Apri sul Reference Ufficiale p5js.org">
+              <span>p5js.org ↗</span>
+            </button>
+          </div>
+        `;
+
+        // Copy syntax button
+        const copyBtn = card.querySelector('.btn-copy-syntax');
+        if (copyBtn) {
+          copyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigator.clipboard.writeText(sym.syntax).then(() => {
+              const orig = copyBtn.textContent;
+              copyBtn.textContent = '✓ Copiato!';
+              copyBtn.classList.add('copied');
+              setTimeout(() => {
+                copyBtn.textContent = orig;
+                copyBtn.classList.remove('copied');
+              }, 1800);
+            });
+          });
+        }
+
+        // Insert code into Monaco editor
+        const insertBtn = card.querySelector('.btn-insert-code');
+        if (insertBtn) {
+          insertBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.editor) {
+              const snippet = sym.syntax.includes('(') ? sym.syntax : `${sym.name};`;
+              const selection = this.editor.getSelection();
+              const op = {
+                range: selection,
+                text: snippet,
+                forceMoveMarkers: true
+              };
+              this.editor.executeEdits('p5-reference-insert', [op]);
+              this.editor.focus();
+            }
+            modal.classList.add('hidden');
+          });
+        }
+
+        // External reference link
+        const extBtn = card.querySelector('.btn-external-ref');
+        if (extBtn) {
+          extBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const refUrl = `https://p5js.org/reference/#/p5/${sym.name}`;
+            if (window.electronAPI && window.electronAPI.system) {
+              window.electronAPI.system.openExternal(refUrl);
+            } else {
+              window.open(refUrl, '_blank');
+            }
+          });
+        }
+
+        grid.appendChild(card);
+      }
+    };
+
+    this.openReferenceModal = (query = '') => {
+      searchQuery = (query || '').trim().toLowerCase();
+      activeCategory = 'all';
+      if (searchInput) {
+        searchInput.value = query || '';
+      }
+      if (btnClearSearch) {
+        if (searchQuery) btnClearSearch.classList.remove('hidden');
+        else btnClearSearch.classList.add('hidden');
+      }
+      if (filtersContainer) {
+        const pills = filtersContainer.querySelectorAll('.pill-filter');
+        pills.forEach((p) => p.classList.remove('active'));
+        const allPill = filtersContainer.querySelector('[data-category="all"]');
+        if (allPill) allPill.classList.add('active');
+      }
+      renderReference();
+      modal.classList.remove('hidden');
+      if (searchInput) searchInput.focus();
+    };
+
+    const closeModal = () => {
+      modal.classList.add('hidden');
+    };
+
+    if (btnOpen) btnOpen.addEventListener('click', () => this.openReferenceModal(''));
+    if (btnClose) btnClose.addEventListener('click', closeModal);
+    if (btnDone) btnDone.addEventListener('click', closeModal);
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    if (btnOfficial) {
+      btnOfficial.addEventListener('click', () => {
+        const url = 'https://p5js.org/reference/';
+        if (window.electronAPI && window.electronAPI.system) {
+          window.electronAPI.system.openExternal(url);
+        } else {
+          window.open(url, '_blank');
+        }
+      });
+    }
+
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        searchQuery = e.target.value.trim().toLowerCase();
+        if (btnClearSearch) {
+          if (searchQuery) btnClearSearch.classList.remove('hidden');
+          else btnClearSearch.classList.add('hidden');
+        }
+        renderReference();
+      });
+    }
+
+    if (btnClearSearch) {
+      btnClearSearch.addEventListener('click', () => {
+        if (searchInput) {
+          searchInput.value = '';
+          searchQuery = '';
+          btnClearSearch.classList.add('hidden');
+          searchInput.focus();
+          renderReference();
+        }
+      });
+    }
+
+    if (filtersContainer) {
+      const pills = filtersContainer.querySelectorAll('.pill-filter');
+      pills.forEach((pill) => {
+        pill.addEventListener('click', () => {
+          pills.forEach((p) => p.classList.remove('active'));
+          pill.classList.add('active');
+          activeCategory = pill.dataset.category || 'all';
+          renderReference();
         });
       });
     }

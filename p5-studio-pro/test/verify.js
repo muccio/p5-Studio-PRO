@@ -355,6 +355,39 @@ test('10. Verify Fault-Tolerant Hot Swap, JS Syntax Guard and VSCode IntelliSens
 });
 
 // ----------------------------------------------------
+// 11. Test p5.js Reference Explorer, Dynamic Context Menu & Ghost Error Marker Fix
+// ----------------------------------------------------
+test('11. Verify p5.js Reference Modal, Dynamic Context Menu Search & Error Clearing', () => {
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="btn-open-reference"'), 'index.html must have btn-open-reference trigger');
+  assert.ok(htmlSrc.includes('id="reference-modal"'), 'index.html must have reference-modal markup');
+  assert.ok(htmlSrc.includes('id="input-search-reference"'), 'index.html must have input-search-reference');
+  assert.ok(htmlSrc.includes('id="reference-results-grid"'), 'index.html must have reference-results-grid');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('initP5ReferenceModal'), 'main.js must implement initP5ReferenceModal');
+  assert.ok(mainJsSrc.includes('openReferenceModal'), 'main.js must expose openReferenceModal');
+  assert.ok(mainJsSrc.includes("monaco.editor.setModelMarkers(model, 'p5-runtime', [])"), 'validateActiveScript must clear p5-runtime markers on valid syntax');
+  assert.ok(mainJsSrc.includes('isGenericScriptError'), 'main.js must detect generic script errors to prevent false line markers');
+
+  const langServiceSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/ideLanguageService.js'), 'utf-8');
+  assert.ok(langServiceSrc.includes('p5-search-reference-inapp'), 'ideLanguageService must register p5-search-reference-inapp action');
+  assert.ok(langServiceSrc.includes('p5-search-reference-online'), 'ideLanguageService must register p5-search-reference-online action');
+  assert.ok(langServiceSrc.includes('editor.onContextMenu'), 'ideLanguageService must dynamically update context menu label on right-click');
+  assert.ok(langServiceSrc.includes('P5_CATEGORIES'), 'ideLanguageService must export P5_CATEGORIES');
+  assert.ok(langServiceSrc.includes('getCategoryForSymbol'), 'ideLanguageService must export getCategoryForSymbol');
+
+  const styleSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/style.css'), 'utf-8');
+  assert.ok(styleSrc.includes('.reference-modal-card'), 'style.css must style .reference-modal-card');
+  assert.ok(styleSrc.includes('.reference-card'), 'style.css must style .reference-card');
+  assert.ok(styleSrc.includes('.btn-insert-code'), 'style.css must style .btn-insert-code');
+
+  const projMgrSrc = fs.readFileSync(path.join(projectRoot, 'src/main/projectManager.js'), 'utf-8');
+  assert.ok(projMgrSrc.includes('credentialless'), 'projectManager must use credentialless for Cross-Origin-Embedder-Policy');
+  assert.ok(projMgrSrc.includes('crossorigin="anonymous"'), 'projectManager must inject crossorigin="anonymous" on CDN scripts');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

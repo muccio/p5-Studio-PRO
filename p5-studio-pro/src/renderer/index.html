@@ -67,6 +67,12 @@
         <span>Librerie p5</span>
       </button>
 
+      <!-- p5.js Reference Explorer Trigger -->
+      <button id="btn-open-reference" class="btn btn-secondary" title="Apri il Reference p5.js con ricerca immediata ed esempi (Ctrl/Cmd+Shift+R)">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+        <span>Reference p5</span>
+      </button>
+
       <div class="divider-vertical"></div>
 
       <!-- Video Export Modal Trigger -->
@@ -376,6 +382,51 @@
       <div class="modal-footer">
         <span id="libraries-active-count" class="libraries-count-label">0 librerie attive</span>
         <button id="btn-done-libraries" class="btn btn-primary">Fatto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- P5.JS REFERENCE EXPLORER MODAL -->
+  <div id="reference-modal" class="modal-overlay hidden">
+    <div class="modal-card reference-modal-card">
+      <div class="modal-header">
+        <div class="modal-header-titles">
+          <h3 class="modal-title">Reference p5.js</h3>
+          <span class="modal-subtitle">Documentazione completa, sintassi e inserimento rapido nel codice</span>
+        </div>
+        <button id="btn-close-reference-modal" class="btn-close" title="Chiudi Reference">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="reference-toolbar">
+          <div class="reference-search-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <input id="input-search-reference" type="text" class="form-input search-input" placeholder="Cerca funzione o costante (es. circle, WEBGL, lerp, mouseX, shader)...">
+            <button id="btn-clear-search-reference" class="btn-clear-search hidden">&times;</button>
+          </div>
+          <div id="reference-category-filters" class="category-filters">
+            <button class="pill-filter active" data-category="all">Tutti</button>
+            <button class="pill-filter" data-category="Forme 2D">Forme 2D</button>
+            <button class="pill-filter" data-category="3D / WebGL">3D / WebGL</button>
+            <button class="pill-filter" data-category="Colore">Colore</button>
+            <button class="pill-filter" data-category="Trasformazioni">Trasformazioni</button>
+            <button class="pill-filter" data-category="Matematica">Matematica</button>
+            <button class="pill-filter" data-category="Input & Eventi">Input & Eventi</button>
+            <button class="pill-filter" data-category="Canvas & Ambiente">Canvas & Ambiente</button>
+            <button class="pill-filter" data-category="Tipografia">Tipografia</button>
+            <button class="pill-filter" data-category="Shader & Audio">Shader & Audio</button>
+          </div>
+        </div>
+        <div id="reference-results-count" class="reference-results-count">Visualizzazione di 0 voci</div>
+        <div id="reference-results-grid" class="reference-results-grid">
+          <!-- Dynamic Reference Cards -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-open-official-ref" class="btn btn-secondary" title="Apri il sito ufficiale p5js.org/reference">
+          <svg class="icon-small" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+          <span>Apri p5js.org/reference ↗</span>
+        </button>
+        <button id="btn-done-reference" class="btn btn-primary">Fatto</button>
       </div>
     </div>
   </div>

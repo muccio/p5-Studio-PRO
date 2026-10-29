@@ -75,30 +75,47 @@ function setupReferenceLinkOpener() {
 export function setupEditorReferenceContextMenu(editor) {
   if (!editor) return;
 
-  // Context Menu: Search p5.js Reference
+  function getQuery(ed) {
+    const model = ed.getModel();
+    if (!model) return '';
+    const selection = ed.getSelection();
+    if (selection && !selection.isEmpty()) {
+      return model.getValueInRange(selection).trim();
+    }
+    const pos = ed.getPosition();
+    if (!pos) return '';
+    const word = model.getWordAtPosition(pos);
+    return word ? word.word : '';
+  }
+
+  // 1. Context Menu: Search In-App p5.js Reference
   editor.addAction({
-    id: 'p5-search-reference',
-    label: 'Cerca nel Reference di p5.js (Online)',
+    id: 'p5-search-reference-inapp',
+    label: '📖 Cerca nel Reference p5.js',
     keybindings: [
-      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR,
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR
+    ],
+    contextMenuGroupId: 'navigation',
+    contextMenuOrder: 1.1,
+    run: (ed) => {
+      const query = getQuery(ed);
+      if (window.p5StudioApp && typeof window.p5StudioApp.openReferenceModal === 'function') {
+        window.p5StudioApp.openReferenceModal(query);
+      }
+    }
+  });
+
+  // 2. Context Menu: Search Official p5.js Reference Online
+  editor.addAction({
+    id: 'p5-search-reference-online',
+    label: '🌐 Apri nel Reference Ufficiale p5.js (Online)',
+    keybindings: [
       monaco.KeyMod.Shift | monaco.KeyCode.F1
     ],
     contextMenuGroupId: 'navigation',
-    contextMenuOrder: 1.5,
+    contextMenuOrder: 1.2,
     run: (ed) => {
-      const position = ed.getPosition();
-      const model = ed.getModel();
-      if (!position || !model) return;
-
-      const selection = ed.getSelection();
-      let query = '';
-      if (selection && !selection.isEmpty()) {
-        query = model.getValueInRange(selection).trim();
-      } else {
-        const word = model.getWordAtPosition(position);
-        query = word ? word.word : '';
-      }
-
+      const query = getQuery(ed);
       let refUrl = 'https://p5js.org/reference/';
       if (query) {
         if (P5_REFERENCE_DOCS[query]) {
@@ -116,7 +133,7 @@ export function setupEditorReferenceContextMenu(editor) {
     }
   });
 
-  // Context Menu: Search GLSL Reference
+  // 3. Context Menu: Search GLSL Reference
   editor.addAction({
     id: 'glsl-search-reference',
     label: 'Cerca nella Reference GLSL / Shaders (Online)',
@@ -126,19 +143,7 @@ export function setupEditorReferenceContextMenu(editor) {
     contextMenuGroupId: 'navigation',
     contextMenuOrder: 1.6,
     run: (ed) => {
-      const position = ed.getPosition();
-      const model = ed.getModel();
-      if (!position || !model) return;
-
-      const selection = ed.getSelection();
-      let query = '';
-      if (selection && !selection.isEmpty()) {
-        query = model.getValueInRange(selection).trim();
-      } else {
-        const word = model.getWordAtPosition(position);
-        query = word ? word.word : '';
-      }
-
+      const query = getQuery(ed);
       let refUrl = 'https://thebookofshaders.com/glossary/';
       if (query) {
         refUrl = `https://thebookofshaders.com/glossary/?search=${encodeURIComponent(query)}`;
@@ -149,6 +154,35 @@ export function setupEditorReferenceContextMenu(editor) {
       } else {
         window.open(refUrl, '_blank');
       }
+    }
+  });
+
+  // Dynamically update context menu item labels based on right-click target or selection
+  editor.onContextMenu((e) => {
+    const model = editor.getModel();
+    if (!model) return;
+    let query = '';
+    const selection = editor.getSelection();
+    if (selection && !selection.isEmpty()) {
+      query = model.getValueInRange(selection).trim();
+    } else if (e.target && e.target.position) {
+      const word = model.getWordAtPosition(e.target.position);
+      query = word ? word.word : '';
+    } else {
+      const pos = editor.getPosition();
+      const word = pos ? model.getWordAtPosition(pos) : null;
+      query = word ? word.word : '';
+    }
+
+    const inAppAction = editor.getAction('p5-search-reference-inapp');
+    const onlineAction = editor.getAction('p5-search-reference-online');
+    if (query) {
+      const display = query.length > 20 ? query.substring(0, 18) + '…' : query;
+      if (inAppAction) inAppAction.label = `📖 Cerca "${display}" nel Reference p5.js`;
+      if (onlineAction) onlineAction.label = `🌐 Apri "${display}" su p5js.org`;
+    } else {
+      if (inAppAction) inAppAction.label = '📖 Cerca nel Reference p5.js';
+      if (onlineAction) onlineAction.label = '🌐 Apri nel Reference Ufficiale p5.js (Online)';
     }
   });
 }
@@ -1005,6 +1039,72 @@ function buildP5CompletionItems(range) {
   }
 
   return items;
+}
+
+/**
+ * Category classification for p5.js Reference explorer and docs
+ */
+export const P5_CATEGORIES = {
+  'Forme 2D': [
+    'circle', 'rect', 'square', 'ellipse', 'line', 'point', 'triangle', 'quad', 'arc',
+    'beginShape', 'endShape', 'vertex', 'curveVertex', 'bezierVertex', 'quadraticVertex',
+    'beginContour', 'endContour', 'bezier', 'curve', 'rectMode', 'ellipseMode', 'strokeCap',
+    'strokeJoin', 'smooth', 'noSmooth'
+  ],
+  '3D / WebGL': [
+    'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane', 'ellipsoid',
+    'camera', 'perspective', 'ortho', 'orbitControl', 'ambientLight', 'directionalLight',
+    'pointLight', 'spotLight', 'lightFalloff', 'lights', 'noLights', 'normalMaterial',
+    'ambientMaterial', 'specularMaterial', 'emissiveMaterial', 'shininess', 'texture',
+    'textureMode', 'textureWrap', 'model', 'loadModel', 'WEBGL', 'buildGeometry'
+  ],
+  'Colore': [
+    'background', 'clear', 'fill', 'noFill', 'stroke', 'noStroke', 'strokeWeight',
+    'colorMode', 'color', 'red', 'green', 'blue', 'alpha', 'hue', 'saturation',
+    'brightness', 'lightness', 'lerpColor', 'RGB', 'HSB', 'HSL'
+  ],
+  'Trasformazioni': [
+    'push', 'pop', 'translate', 'rotate', 'rotateX', 'rotateY', 'rotateZ', 'scale',
+    'shearX', 'shearY', 'resetMatrix', 'applyMatrix'
+  ],
+  'Matematica': [
+    'random', 'randomSeed', 'randomGaussian', 'noise', 'noiseSeed', 'noiseDetail',
+    'map', 'constrain', 'dist', 'lerp', 'mag', 'norm', 'sq', 'sqrt', 'abs', 'floor',
+    'ceil', 'round', 'min', 'max', 'pow', 'exp', 'log', 'sin', 'cos', 'tan', 'asin',
+    'acos', 'atan', 'atan2', 'degrees', 'radians', 'createVector', 'p5.Vector',
+    'PI', 'HALF_PI', 'QUARTER_PI', 'TWO_PI', 'TAU', 'DEGREES', 'RADIANS'
+  ],
+  'Input & Eventi': [
+    'mouseX', 'mouseY', 'pmouseX', 'pmouseY', 'winMouseX', 'winMouseY', 'pwinMouseX',
+    'pwinMouseY', 'mouseButton', 'mouseIsPressed', 'mouseMoved', 'mouseDragged',
+    'mousePressed', 'mouseReleased', 'mouseClicked', 'doubleClicked', 'mouseWheel',
+    'keyIsPressed', 'key', 'keyCode', 'keyPressed', 'keyReleased', 'keyTyped',
+    'touches', 'touchStarted', 'touchMoved', 'touchEnded', 'deviceOrientation',
+    'accelerationX', 'accelerationY', 'accelerationZ'
+  ],
+  'Canvas & Ambiente': [
+    'createCanvas', 'resizeCanvas', 'noCanvas', 'createGraphics', 'blendMode',
+    'pixelDensity', 'displayDensity', 'frameRate', 'frameCount', 'deltaTime',
+    'width', 'height', 'windowWidth', 'windowHeight', 'windowResized', 'fullscreen',
+    'cursor', 'noCursor', 'loop', 'noLoop', 'redraw', 'isLooping', 'loadPixels',
+    'updatePixels', 'get', 'set', 'copy', 'saveCanvas', 'saveGif', 'saveFrames',
+    'P2D', 'CENTER', 'CORNER', 'CORNERS', 'RADIUS', 'CLOSE', 'POINTS', 'LINES', 'TRIANGLES'
+  ],
+  'Tipografia': [
+    'text', 'textSize', 'textAlign', 'textFont', 'textLeading', 'textStyle',
+    'textWidth', 'textAscent', 'textDescent', 'loadFont', 'LEFT', 'RIGHT', 'TOP', 'BOTTOM', 'BASELINE'
+  ],
+  'Shader & Audio': [
+    'loadShader', 'createShader', 'shader', 'resetShader', 'loadSound', 'createAudio',
+    'ideShader', 'ideAudio', 'ideOSC'
+  ]
+};
+
+export function getCategoryForSymbol(name) {
+  for (const [cat, names] of Object.entries(P5_CATEGORIES)) {
+    if (names.includes(name)) return cat;
+  }
+  return 'Canvas & Ambiente';
 }
 
 /**

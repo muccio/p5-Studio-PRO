@@ -548,7 +548,7 @@
   window.ideShader = new IdeShaderManager();
 
   // =========================================================================
-  // Sandbox Error Boundary & Visual HUD Overlay
+  // Sandbox Error Boundary & Visual HUD Overlay with Auto-Recovery
   // =========================================================================
   function showSandboxErrorOverlay(msg, source, line, col) {
     if (isExportMode) return;
@@ -561,7 +561,7 @@
         bottom: 16px;
         left: 16px;
         right: 16px;
-        max-width: 560px;
+        max-width: 580px;
         z-index: 9999999;
         background: rgba(30, 8, 12, 0.95);
         backdrop-filter: blur(8px);
@@ -584,6 +584,7 @@
 
       const closeBtn = document.createElement('button');
       closeBtn.innerHTML = '&times;';
+      closeBtn.title = 'Chiudi notifica errore';
       closeBtn.style.cssText = `
         background: none;
         border: none;
@@ -594,7 +595,12 @@
         padding: 0 0 0 12px;
         margin: 0;
       `;
-      closeBtn.onclick = () => overlay.remove();
+      closeBtn.onclick = () => {
+        overlay.remove();
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'runtime:success' }, '*');
+        }
+      };
       overlay.appendChild(closeBtn);
 
       const parent = document.body || document.documentElement;
@@ -603,13 +609,18 @@
 
     const content = document.getElementById('studio-sandbox-error-content');
     if (content) {
-      const filename = source ? source.split('/').pop() : 'sketch.js';
-      const loc = line ? `:${line}${col ? `:${col}` : ''}` : '';
+      let displaySource = source ? source.split('/').pop() : 'sketch.js';
+      let displayMsg = msg;
+      if (msg === 'Script error.' && (!line || line === 0)) {
+        displaySource = 'CDN / Script Esterno';
+        displayMsg = 'Possibile incompatibilità o errore di caricamento nella versione p5.js selezionata. Seleziona una versione stabile (es. 1.11.2) dal menu a tendina.';
+      }
+      const loc = line && line > 0 ? `:${line}${col ? `:${col}` : ''}` : '';
       content.innerHTML = `
         <div style="font-weight: bold; color: #ff3366; margin-bottom: 2px;">
-          ⚠️ Errore Runtime / Sintassi (${filename}${loc})
+          ⚠️ Errore Runtime / Sintassi (${displaySource}${loc})
         </div>
-        <div style="color: #ffe6ec; word-break: break-word;">${msg}</div>
+        <div style="color: #ffe6ec; word-break: break-word;">${displayMsg}</div>
       `;
     }
   }
@@ -619,11 +630,37 @@
     if (overlay) overlay.remove();
   }
 
+  // Clear any existing overlay immediately on load
+  clearSandboxErrorOverlay();
+
+  // Auto-recovery: when animation frame executes cleanly, remove error overlay
+  let hasSignaledSuccess = false;
+  const origRAF = window.requestAnimationFrame;
+  if (origRAF) {
+    window.requestAnimationFrame = function (cb) {
+      return origRAF.call(window, function (timestamp) {
+        try {
+          cb(timestamp);
+          if (!hasSignaledSuccess) {
+            clearSandboxErrorOverlay();
+            if (window.parent && window.parent !== window) {
+              window.parent.postMessage({ type: 'runtime:success' }, '*');
+            }
+            hasSignaledSuccess = true;
+          }
+        } catch (err) {
+          showSandboxErrorOverlay(err.message, err.fileName || 'sketch.js', err.lineNumber || 0, err.columnNumber || 0);
+          throw err;
+        }
+      });
+    };
+  }
+
   window.addEventListener('error', (event) => {
     const msg = event.message || 'Script execution error';
-    const source = event.filename || 'sketch.js';
-    const line = event.lineno;
-    const col = event.colno;
+    const source = event.filename || (msg === 'Script error.' ? 'CDN' : 'sketch.js');
+    const line = event.lineno || 0;
+    const col = event.colno || 0;
 
     showSandboxErrorOverlay(msg, source, line, col);
 
@@ -654,6 +691,7 @@
   });
 
   window.addEventListener('DOMContentLoaded', () => {
+    clearSandboxErrorOverlay();
     if (!isExportMode) {
       window.ideAudio.initLive();
     }
@@ -663,6 +701,6 @@
       if (!overlay && window.parent && window.parent !== window) {
         window.parent.postMessage({ type: 'runtime:success' }, '*');
       }
-    }, 150);
+    }, 250);
   });
 })();
