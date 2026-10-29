@@ -327,6 +327,34 @@ test('9. Verify p5.js Version Selector, Libraries Catalog, Reference Links and L
 });
 
 // ----------------------------------------------------
+// 10. Test Fault-Tolerant Hot Swap, JS Syntax Validation & VSCode IntelliSense
+// ----------------------------------------------------
+test('10. Verify Fault-Tolerant Hot Swap, JS Syntax Guard and VSCode IntelliSense Completion', () => {
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('validateActiveScript'), 'main.js must implement validateActiveScript');
+  assert.ok(mainJsSrc.includes('hasJsErrors'), 'main.js must track hasJsErrors state');
+  assert.ok(!mainJsSrc.includes('window.electronAPI.live.reload()'), 'restartPreview must NEVER automatically reload live window');
+  assert.ok(mainJsSrc.includes('runtime:error'), 'main.js must handle runtime:error message from sandbox');
+
+  const langServiceSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/ideLanguageService.js'), 'utf-8');
+  assert.ok(langServiceSrc.includes('buildP5CompletionItems'), 'ideLanguageService must implement buildP5CompletionItems');
+  assert.ok(langServiceSrc.includes('circle'), 'P5_REFERENCE_DOCS must contain circle');
+  assert.ok(langServiceSrc.includes('rect'), 'P5_REFERENCE_DOCS must contain rect');
+  assert.ok(langServiceSrc.includes('createCanvas'), 'P5_REFERENCE_DOCS must contain createCanvas');
+  assert.ok(langServiceSrc.includes('triggerCharacters'), 'completion providers must define triggerCharacters');
+
+  const glslSetupSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/glslMonacoSetup.js'), 'utf-8');
+  assert.ok(glslSetupSrc.includes('triggerCharacters'), 'glslMonacoSetup must define triggerCharacters for auto-trigger');
+
+  const runtimeSrc = fs.readFileSync(path.join(projectRoot, 'src/main/sandboxRuntime.js'), 'utf-8');
+  assert.ok(runtimeSrc.includes('studio-sandbox-error-overlay'), 'sandboxRuntime must implement floating error HUD');
+  assert.ok(runtimeSrc.includes('runtime:error'), 'sandboxRuntime must post runtime:error');
+
+  const preloadSrc = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(preloadSrc.includes('studio-sandbox-error-overlay'), 'sandboxPreload must implement floating error HUD');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

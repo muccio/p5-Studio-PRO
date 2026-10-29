@@ -158,6 +158,7 @@ export function setupEditorReferenceContextMenu(editor) {
  */
 function setupHtmlCodeHints() {
   monaco.languages.registerCompletionItemProvider('html', {
+    triggerCharacters: ['<', '!', ' ', '"', "'", ':', '/', ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')],
     provideCompletionItems: (model, position) => {
       const word = model.getWordUntilPosition(position);
       const range = {
@@ -265,6 +266,7 @@ function setupHtmlCodeHints() {
  */
 function setupCssCodeHints() {
   monaco.languages.registerCompletionItemProvider('css', {
+    triggerCharacters: [':', ' ', '-', ';', '{', ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')],
     provideCompletionItems: (model, position) => {
       const word = model.getWordUntilPosition(position);
       const range = {
@@ -713,9 +715,9 @@ declare const TAU: number;
 
   ts.javascriptDefaults.addExtraLib(studioTypeDefs, 'ts:p5-studio-pro.d.ts');
 
-  // Register VSCode-grade JavaScript completion items
+  // Register VSCode-grade JavaScript completion items with full p5.js coverage
   monaco.languages.registerCompletionItemProvider('javascript', {
-    triggerCharacters: ['.', '(', '"', "'", ' '],
+    triggerCharacters: ['.', '(', '"', "'", ' ', '_', ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')],
     provideCompletionItems: (model, position) => {
       const word = model.getWordUntilPosition(position);
       const range = {
@@ -726,6 +728,64 @@ declare const TAU: number;
       };
 
       const suggestions = [
+        // 1. All official p5.js functions, variables & constants from P5_REFERENCE_DOCS
+        ...buildP5CompletionItems(range),
+
+        // 2. Lifecycle boilerplate snippets
+        {
+          label: 'function setup',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: 'function setup() {\n  createCanvas(${1:windowWidth}, ${2:windowHeight}${3:, WEBGL});\n  ${4}\n}',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          detail: 'p5.js setup() lifecycle block',
+          documentation: { value: 'Inizializzazione dello sketch p5.js: eseguita una sola volta all\'avvio.' },
+          range
+        },
+        {
+          label: 'function draw',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: 'function draw() {\n  background(${1:0});\n  ${2}\n}',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          detail: 'p5.js draw() animation loop block',
+          documentation: { value: 'Loop di rendering continuo eseguito a ogni frame di animazione.' },
+          range
+        },
+        {
+          label: 'function preload',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: 'async function preload() {\n  ${1}\n}',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          detail: 'p5.js preload() asset loading block',
+          documentation: { value: 'Caricamento asincrono di shader, suoni, immagini e modelli 3D prima di setup().' },
+          range
+        },
+        {
+          label: 'function windowResized',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: 'function windowResized() {\n  resizeCanvas(windowWidth, windowHeight);\n}',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          detail: 'p5.js responsive canvas resize handler',
+          documentation: { value: 'Callback invocato al ridimensionamento della finestra per adattare il canvas.' },
+          range
+        },
+        {
+          label: 'function mousePressed',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: 'function mousePressed() {\n  ${1}\n}',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          detail: 'p5.js mousePressed event handler',
+          range
+        },
+        {
+          label: 'function keyPressed',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: 'function keyPressed() {\n  ${1}\n}',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          detail: 'p5.js keyPressed event handler',
+          range
+        },
+
+        // 3. IDE Shader & Audio & OSC APIs
         {
           label: 'ideShader.load',
           kind: monaco.languages.CompletionItemKind.Method,
@@ -888,6 +948,63 @@ declare const TAU: number;
       return null;
     }
   });
+}
+
+/**
+ * Generate Monaco completion items for all official p5.js functions, variables, and constants
+ */
+function buildP5CompletionItems(range) {
+  const items = [];
+
+  for (const [name, doc] of Object.entries(P5_REFERENCE_DOCS)) {
+    const isFunc = doc.syntax && doc.syntax.includes('(');
+    const isConst = /^[A-Z0-9_]+$/.test(name);
+
+    let kind = monaco.languages.CompletionItemKind.Function;
+    let insertText = name;
+    let isSnippet = false;
+
+    if (isConst) {
+      kind = monaco.languages.CompletionItemKind.Constant;
+      insertText = name;
+    } else if (!isFunc) {
+      kind = monaco.languages.CompletionItemKind.Variable;
+      insertText = name;
+    } else {
+      kind = monaco.languages.CompletionItemKind.Function;
+      // Generate clean parameter snippet
+      const parenMatch = doc.syntax.match(/\((.*?)\)/);
+      if (parenMatch && parenMatch[1].trim()) {
+        const rawParams = parenMatch[1]
+          .split(',')
+          .map(p => p.trim().replace(/[\[\]]/g, ''))
+          .filter(p => p && !p.includes('|') && !p.includes('...'));
+        if (rawParams.length > 0) {
+          const snippetParams = rawParams.map((p, idx) => `\${${idx + 1}:${p}}`).join(', ');
+          insertText = `${name}(${snippetParams})`;
+          isSnippet = true;
+        } else {
+          insertText = `${name}()`;
+        }
+      } else {
+        insertText = `${name}()`;
+      }
+    }
+
+    items.push({
+      label: name,
+      kind,
+      insertText,
+      insertTextRules: isSnippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+      detail: doc.syntax || name,
+      documentation: {
+        value: `${doc.desc}\n\n**Sintassi:** \`${doc.syntax}\`\n\n[📖 Reference p5.js (Online)](https://p5js.org/reference/#/p5/${name})`
+      },
+      range
+    });
+  }
+
+  return items;
 }
 
 /**
@@ -1137,5 +1254,321 @@ export const P5_REFERENCE_DOCS = {
   mouseIsPressed: {
     syntax: 'mouseIsPressed',
     desc: 'Variabile booleana di sistema: `true` quando un pulsante del mouse è premuto.'
+  },
+  pmouseX: {
+    syntax: 'pmouseX',
+    desc: 'Coordinata orizzontale X del puntatore del mouse nel frame precedente.'
+  },
+  pmouseY: {
+    syntax: 'pmouseY',
+    desc: 'Coordinata verticale Y del puntatore del mouse nel frame precedente.'
+  },
+  windowWidth: {
+    syntax: 'windowWidth',
+    desc: 'Variabile di sistema contenente la larghezza della finestra del browser in pixel.'
+  },
+  windowHeight: {
+    syntax: 'windowHeight',
+    desc: 'Variabile di sistema contenente l\'altezza della finestra del browser in pixel.'
+  },
+  key: {
+    syntax: 'key',
+    desc: 'Variabile di sistema che memorizza il valore del carattere dell\'ultimo tasto premuto.'
+  },
+  keyCode: {
+    syntax: 'keyCode',
+    desc: 'Codice numerico del tasto speciale premuto (es. `UP_ARROW`, `DOWN_ARROW`, `ENTER`, `ESCAPE`).'
+  },
+  keyIsPressed: {
+    syntax: 'keyIsPressed',
+    desc: 'Variabile booleana di sistema: `true` quando un qualsiasi tasto della tastiera è premuto.'
+  },
+  pixels: {
+    syntax: 'pixels',
+    desc: 'Array Uint8ClampedArray contenente i valori dei componenti RGBA di ogni singolo pixel del canvas.'
+  },
+  text: {
+    syntax: 'text(str, x, y, [x2], [y2])',
+    desc: 'Disegna una stringa o valore di testo sul canvas alle coordinate specificate.'
+  },
+  textSize: {
+    syntax: 'textSize(size)',
+    desc: 'Imposta la dimensione attuale del font in pixel per il rendering di testo.'
+  },
+  textAlign: {
+    syntax: 'textAlign(horizAlign, [vertAlign])',
+    desc: 'Imposta l\'allineamento orizzontale e verticale del testo (`LEFT`, `CENTER`, `RIGHT`).'
+  },
+  textFont: {
+    syntax: 'textFont(font, [size])',
+    desc: 'Imposta il font tipografico attivo per le funzioni `text()`.'
+  },
+  textLeading: {
+    syntax: 'textLeading(leading)',
+    desc: 'Imposta la spaziatura verticale tra le righe di testo in pixel.'
+  },
+  textWidth: {
+    syntax: 'textWidth(str)',
+    desc: 'Calcola e restituisce la larghezza geometrica in pixel del testo fornito.'
+  },
+  loadFont: {
+    syntax: 'loadFont(path, [successCallback])',
+    desc: 'Carica un file font OpenType/TrueType (.otf, .ttf) da file o URL (solitamente dentro `preload()`).'
+  },
+  loadImage: {
+    syntax: 'loadImage(path, [successCallback])',
+    desc: 'Carica un\'immagine asincronamente da disco o web prima dell\'avvio dello sketch.'
+  },
+  image: {
+    syntax: 'image(img, x, y, [width], [height])',
+    desc: 'Disegna un\'immagine o texture grafica caricata sul canvas alle coordinate `(x, y)`.'
+  },
+  tint: {
+    syntax: 'tint(v1, [v2], [v3], [alpha])',
+    desc: 'Applica una tonalità di colore o trasparenza alle immagini disegnate successivamente con `image()`.'
+  },
+  noTint: {
+    syntax: 'noTint()',
+    desc: 'Rimuove l\'effetto di colorazione tint dalle immagini.'
+  },
+  imageMode: {
+    syntax: 'imageMode(mode)',
+    desc: 'Imposta il sistema di riferimento per il posizionamento delle immagini (`CORNER`, `CENTER`).'
+  },
+  color: {
+    syntax: 'color(r, [g], [b], [a])',
+    desc: 'Crea un oggetto colore p5.js con valori RGB, HSB o notazione esadecimale.'
+  },
+  red: {
+    syntax: 'red(color)',
+    desc: 'Estrae il valore del canale rosso da un colore p5 (0-255).'
+  },
+  green: {
+    syntax: 'green(color)',
+    desc: 'Estrae il valore del canale verde da un colore p5 (0-255).'
+  },
+  blue: {
+    syntax: 'blue(color)',
+    desc: 'Estrae il valore del canale blu da un colore p5 (0-255).'
+  },
+  alpha: {
+    syntax: 'alpha(color)',
+    desc: 'Estrae il valore di trasparenza alpha da un colore p5 (0-255).'
+  },
+  hue: {
+    syntax: 'hue(color)',
+    desc: 'Estrae la tonalità (hue) da un colore p5.'
+  },
+  saturation: {
+    syntax: 'saturation(color)',
+    desc: 'Estrae la saturazione da un colore p5.'
+  },
+  brightness: {
+    syntax: 'brightness(color)',
+    desc: 'Estrae la luminosità (brightness) da un colore p5.'
+  },
+  colorMode: {
+    syntax: 'colorMode(mode, [max1], [max2], [max3], [maxA])',
+    desc: 'Cambia lo spazio colore utilizzato per interpretare i valori di colore (`RGB`, `HSB` o `HSL`).'
+  },
+  noLoop: {
+    syntax: 'noLoop()',
+    desc: 'Arresta il loop automatico di esecuzione continua della funzione `draw()`.'
+  },
+  loop: {
+    syntax: 'loop()',
+    desc: 'Riprende il loop continuo di esecuzione della funzione `draw()`.'
+  },
+  redraw: {
+    syntax: 'redraw([n])',
+    desc: 'Esegue il ciclo `draw()` per il numero di volte specificato (quando `noLoop()` è attivo).'
+  },
+  cursor: {
+    syntax: 'cursor([type])',
+    desc: 'Imposta l\'icona del cursore del mouse sopra il canvas (`ARROW`, `CROSS`, `HAND`, `MOVE`, `TEXT`, `WAIT`).'
+  },
+  noCursor: {
+    syntax: 'noCursor()',
+    desc: 'Nasconde completamente il cursore del mouse sopra il canvas.'
+  },
+  millis: {
+    syntax: 'millis()',
+    desc: 'Restituisce il numero di millisecondi trascorsi dall\'avvio dello sketch.'
+  },
+  min: {
+    syntax: 'min(n1, n2, ...)',
+    desc: 'Restituisce il valore numerico minimo tra gli argomenti forniti.'
+  },
+  max: {
+    syntax: 'max(n1, n2, ...)',
+    desc: 'Restituisce il valore numerico massimo tra gli argomenti forniti.'
+  },
+  abs: {
+    syntax: 'abs(n)',
+    desc: 'Calcola il valore assoluto positivo di un numero.'
+  },
+  floor: {
+    syntax: 'floor(n)',
+    desc: 'Arrotonda un numero al più vicino intero inferiore.'
+  },
+  ceil: {
+    syntax: 'ceil(n)',
+    desc: 'Arrotonda un numero al più vicino intero superiore.'
+  },
+  round: {
+    syntax: 'round(n)',
+    desc: 'Arrotonda un numero all\'intero matematico più vicino.'
+  },
+  sqrt: {
+    syntax: 'sqrt(n)',
+    desc: 'Calcola la radice quadrata di un numero.'
+  },
+  sq: {
+    syntax: 'sq(n)',
+    desc: 'Calcola il quadrato di un numero (`n * n`).'
+  },
+  pow: {
+    syntax: 'pow(n, e)',
+    desc: 'Eleva la base alla potenza dell\'esponente specificato (`n^e`).'
+  },
+  exp: {
+    syntax: 'exp(n)',
+    desc: 'Calcola l\'esponenziale naturale di Eulero `e^n`.'
+  },
+  log: {
+    syntax: 'log(n)',
+    desc: 'Calcola il logaritmo naturale (base e) del numero fornito.'
+  },
+  tan: {
+    syntax: 'tan(angle)',
+    desc: 'Calcola la tangente trigonometrica dell\'angolo fornito.'
+  },
+  atan2: {
+    syntax: 'atan2(y, x)',
+    desc: 'Calcola l\'angolo polare tra l\'asse X e il punto cartesiano `(x, y)`.'
+  },
+  loadPixels: {
+    syntax: 'loadPixels()',
+    desc: 'Carica i pixel del canvas nell\'array globale `pixels` per manipolazione diretta a livello di byte.'
+  },
+  updatePixels: {
+    syntax: 'updatePixels()',
+    desc: 'Aggiorna la texture del canvas con i dati presenti nell\'array `pixels`.'
+  },
+  saveCanvas: {
+    syntax: 'saveCanvas([filename], [extension])',
+    desc: 'Salva il frame canvas corrente come file immagine sul disco del computer.'
+  },
+  saveGif: {
+    syntax: 'saveGif(filename, duration, [options])',
+    desc: 'Registra e salva una sequenza animata GIF dello sketch.'
+  },
+  cylinder: {
+    syntax: 'cylinder([radius], [height], [detailX], [detailY])',
+    desc: 'Disegna un cilindro 3D nel renderer WebGL.'
+  },
+  cone: {
+    syntax: 'cone([radius], [height], [detailX], [detailY])',
+    desc: 'Disegna un cono 3D nel renderer WebGL.'
+  },
+  camera: {
+    syntax: 'camera([x], [y], [z], [cx], [cy], [cz], [upX], [upY], [upZ])',
+    desc: 'Posiziona e orienta la telecamera nello spazio 3D WebGL.'
+  },
+  perspective: {
+    syntax: 'perspective([fovy], [aspect], [near], [far])',
+    desc: 'Imposta una proiezione prospettica piramidale per la telecamera 3D WebGL.'
+  },
+  ortho: {
+    syntax: 'ortho([left], [right], [bottom], [top], [near], [far])',
+    desc: 'Imposta una proiezione ortografica (parallela) per la telecamera 3D WebGL.'
+  },
+  ambientLight: {
+    syntax: 'ambientLight(v1, [v2], [v3], [a])',
+    desc: 'Aggiunge una luce ambiente omogenea e diffusa alla scena 3D.'
+  },
+  directionalLight: {
+    syntax: 'directionalLight(v1, v2, v3, x, y, z)',
+    desc: 'Aggiunge una luce direzionale (come i raggi solari) alla scena 3D.'
+  },
+  pointLight: {
+    syntax: 'pointLight(v1, v2, v3, x, y, z)',
+    desc: 'Aggiunge una luce puntiforme che emana radialmente da una posizione `(x, y, z)`.'
+  },
+  normalMaterial: {
+    syntax: 'normalMaterial()',
+    desc: 'Applica un materiale basato sui vettori normali delle superfici geometriche 3D.'
+  },
+  ambientMaterial: {
+    syntax: 'ambientMaterial(v1, [v2], [v3], [a])',
+    desc: 'Applica un materiale che riflette solo la luce ambiente.'
+  },
+  specularMaterial: {
+    syntax: 'specularMaterial(v1, [v2], [v3], [a])',
+    desc: 'Applica un materiale con riflessi speculari lucidi.'
+  },
+  shininess: {
+    syntax: 'shininess(p)',
+    desc: 'Imposta il grado di brillantezza/lucidità per i riflessi speculari 3D.'
+  },
+  WEBGL: {
+    syntax: 'WEBGL',
+    desc: 'Costante per abilitare il motore di rendering 3D basato su WebGL in `createCanvas()`.'
+  },
+  P2D: {
+    syntax: 'P2D',
+    desc: 'Costante per il motore di rendering bidimensionale predefinito in `createCanvas()`.'
+  },
+  CENTER: {
+    syntax: 'CENTER',
+    desc: 'Costante di allineamento centrale per `rectMode`, `imageMode` e `textAlign`.'
+  },
+  CORNER: {
+    syntax: 'CORNER',
+    desc: 'Costante di posizionamento dall\'angolo superiore sinistro per `rectMode` e `imageMode`.'
+  },
+  RADIUS: {
+    syntax: 'RADIUS',
+    desc: 'Costante di posizionamento basata sul raggio per `rectMode` ed `ellipseMode`.'
+  },
+  RGB: {
+    syntax: 'RGB',
+    desc: 'Costante dello spazio colore Red-Green-Blue (default).'
+  },
+  HSB: {
+    syntax: 'HSB',
+    desc: 'Costante dello spazio colore Hue-Saturation-Brightness.'
+  },
+  CLOSE: {
+    syntax: 'CLOSE',
+    desc: 'Costante utilizzata con `endShape(CLOSE)` per chiudere il contorno della forma geometrica.'
+  },
+  POINTS: {
+    syntax: 'POINTS',
+    desc: 'Costante per disegnare singoli punti geometrici con `beginShape()`.'
+  },
+  LINES: {
+    syntax: 'LINES',
+    desc: 'Costante per disegnare linee a coppie di vertici con `beginShape()`.'
+  },
+  TRIANGLES: {
+    syntax: 'TRIANGLES',
+    desc: 'Costante per disegnare triangoli indipendenti con `beginShape()`.'
+  },
+  PI: {
+    syntax: 'PI',
+    desc: 'Costante matematica π (3.141592653589793).'
+  },
+  TWO_PI: {
+    syntax: 'TWO_PI',
+    desc: 'Costante matematica 2π = τ (6.283185307179586).'
+  },
+  HALF_PI: {
+    syntax: 'HALF_PI',
+    desc: 'Costante matematica π / 2 (1.5707963267948966).'
+  },
+  TAU: {
+    syntax: 'TAU',
+    desc: 'Costante matematica τ = 2π (6.283185307179586).'
   }
 };

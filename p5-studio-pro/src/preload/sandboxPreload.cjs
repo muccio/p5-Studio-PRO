@@ -127,6 +127,108 @@ if (isPopoutMode) {
   });
 }
 
+// =========================================================================
+// Sandbox Error Boundary for Electron Preload Environment
+// =========================================================================
+if (!isExportMode && !isLiveMode) {
+  function showSandboxErrorOverlay(msg, source, line, col) {
+    let overlay = document.getElementById('studio-sandbox-error-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'studio-sandbox-error-overlay';
+      overlay.style.cssText = `
+        position: fixed;
+        bottom: 16px;
+        left: 16px;
+        right: 16px;
+        max-width: 560px;
+        z-index: 9999999;
+        background: rgba(30, 8, 12, 0.95);
+        backdrop-filter: blur(8px);
+        border: 1px solid #ff0055;
+        border-radius: 6px;
+        padding: 10px 14px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+        color: #ff99bb;
+        font-family: Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        pointer-events: auto;
+      `;
+      const content = document.createElement('div');
+      content.id = 'studio-sandbox-error-content';
+      overlay.appendChild(content);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.innerHTML = '&times;';
+      closeBtn.style.cssText = `
+        background: none;
+        border: none;
+        color: #ff0055;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 0 0 12px;
+        margin: 0;
+      `;
+      closeBtn.onclick = () => overlay.remove();
+      overlay.appendChild(closeBtn);
+
+      const parent = document.body || document.documentElement;
+      if (parent) parent.appendChild(overlay);
+    }
+
+    const content = document.getElementById('studio-sandbox-error-content');
+    if (content) {
+      const filename = source ? source.split('/').pop() : 'sketch.js';
+      const loc = line ? `:${line}${col ? `:${col}` : ''}` : '';
+      content.innerHTML = `
+        <div style="font-weight: bold; color: #ff3366; margin-bottom: 2px;">
+          ⚠️ Errore Runtime / Sintassi (${filename}${loc})
+        </div>
+        <div style="color: #ffe6ec; word-break: break-word;">${msg}</div>
+      `;
+    }
+  }
+
+  window.addEventListener('error', (event) => {
+    const msg = event.message || 'Script execution error';
+    const source = event.filename || 'sketch.js';
+    const line = event.lineno;
+    const col = event.colno;
+
+    showSandboxErrorOverlay(msg, source, line, col);
+
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'runtime:error',
+        message: msg,
+        filename: source.split('/').pop(),
+        lineno: line,
+        colno: col
+      }, '*');
+    }
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const msg = event.reason ? (event.reason.message || String(event.reason)) : 'Unhandled Promise Rejection';
+    showSandboxErrorOverlay(msg, 'async', 0, 0);
+
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'runtime:error',
+        message: msg,
+        filename: 'async',
+        lineno: 0,
+        colno: 0
+      }, '*');
+    }
+  });
+}
+
 if (isExportMode) {
   // Override window inner dimensions to exact export resolution
   try {

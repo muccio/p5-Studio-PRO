@@ -247,8 +247,9 @@ export function setupGLSLSupport() {
     }
   });
 
-  // GLSL Autocomplete Provider
+  // GLSL Autocomplete Provider with full VSCode-grade trigger characters
   monaco.languages.registerCompletionItemProvider('glsl', {
+    triggerCharacters: ['.', '(', ',', ' ', '#', '_', 'u', ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')],
     provideCompletionItems: (model, position) => {
       const word = model.getWordUntilPosition(position);
       const range = {

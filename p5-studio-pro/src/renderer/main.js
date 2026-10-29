@@ -68,6 +68,7 @@ class IDEApp {
     this.isLiveDirty = false;
     this.pendingLiveType = null;
     this.hasShaderErrors = false;
+    this.hasJsErrors = false;
   }
 
   async init() {
@@ -199,10 +200,11 @@ class IDEApp {
         comments: false,
         strings: true
       },
-      quickSuggestionsDelay: 10,
+      quickSuggestionsDelay: 0,
       suggestOnTriggerCharacters: true,
       acceptSuggestionOnEnter: 'on',
       acceptSuggestionOnCommitCharacter: true,
+      tabCompletion: 'on',
       snippetSuggestions: 'top',
       wordBasedSuggestions: 'matchingDocuments',
       suggest: {
@@ -211,7 +213,13 @@ class IDEApp {
         preview: true,
         previewMode: 'subwordSmart',
         filterGraceful: true,
-        snippetsPreventQuickSuggestions: false
+        snippetsPreventQuickSuggestions: false,
+        showWords: true,
+        showFunctions: true,
+        showVariables: true,
+        showConstants: true,
+        showMethods: true,
+        showSnippets: true
       },
       parameterHints: {
         enabled: true,
@@ -246,11 +254,26 @@ class IDEApp {
               this.setLiveStageDirty(true, 'shader');
             }
           }
-        } else if (['js', 'jsx', 'ts', 'tsx', 'html', 'htm', 'css', 'json'].includes(ext)) {
+        } else if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
+          const isSyntaxValid = this.validateActiveScript(content);
+          if (isSyntaxValid) {
+            this.restartPreview();
+            if (window.electronAPI) {
+              if (window.electronAPI.preview) window.electronAPI.preview.reload();
+              if (this.isLiveWindowOpen) {
+                this.setLiveStageDirty(true, 'code');
+              }
+            }
+          } else {
+            // Fault-tolerant Live Coding: keep previous working canvas alive!
+            if (this.isLiveWindowOpen) {
+              this.setLiveStageDirty(true, 'code');
+            }
+          }
+        } else if (['html', 'htm', 'css', 'json'].includes(ext)) {
           this.restartPreview();
           if (window.electronAPI) {
             if (window.electronAPI.preview) window.electronAPI.preview.reload();
-            // In Live mode: do NOT push automatically to the external display; mark dirty for manual push!
             if (this.isLiveWindowOpen) {
               this.setLiveStageDirty(true, 'code');
             }
@@ -329,7 +352,11 @@ class IDEApp {
     document.getElementById('status-file-info').textContent = relativePath;
     this.renderTabs();
     this.highlightActiveTreeItem();
-    this.validateActiveShader();
+    if (relativePath.endsWith('.js')) {
+      this.validateActiveScript(this.editor.getValue());
+    } else {
+      this.validateActiveShader();
+    }
   }
 
   closeTab(relativePath, event) {
@@ -383,10 +410,14 @@ class IDEApp {
     const diagSpan = document.getElementById('status-diagnostics');
 
     if (!isShader) {
-      diagSpan.className = 'diagnostic-clean';
-      diagSpan.textContent = 'Ready';
-      clearModelDiagnostics(this.editor);
-      this.hasShaderErrors = false;
+      if (this.activeFilePath.endsWith('.js')) {
+        this.validateActiveScript(this.editor.getValue());
+      } else {
+        diagSpan.className = 'diagnostic-clean';
+        diagSpan.textContent = 'Ready';
+        clearModelDiagnostics(this.editor);
+        this.hasShaderErrors = false;
+      }
       return;
     }
 
@@ -403,6 +434,57 @@ class IDEApp {
       diagSpan.className = 'diagnostic-error';
       diagSpan.textContent = `GLSL Error: ${err.message}`;
       setModelDiagnostics(this.editor, [{ line: 1, message: err.message }]);
+    }
+  }
+
+  validateActiveScript(code) {
+    if (!this.activeFilePath || !this.activeFilePath.endsWith('.js')) {
+      this.hasJsErrors = false;
+      return true;
+    }
+    const model = this.editor ? this.editor.getModel() : null;
+    if (!model) return true;
+
+    try {
+      if (/^\s*(import|export)\s/m.test(code)) {
+        const testCode = code
+          .replace(/^\s*export\s+default\s+/gm, 'let __def = ')
+          .replace(/^\s*export\s+(const|let|var|function|class)\s+/gm, '$1 ')
+          .replace(/^\s*export\s*\{[^}]*\}\s*;?/gm, '')
+          .replace(/^\s*import\s+.*?from\s+['"][^'"]+['"]\s*;?/gm, '');
+        new Function(testCode);
+      } else {
+        new Function(code);
+      }
+
+      this.hasJsErrors = false;
+      monaco.editor.setModelMarkers(model, 'js-syntax', []);
+      const diagSpan = document.getElementById('status-diagnostics');
+      if (diagSpan && !this.hasShaderErrors) {
+        diagSpan.className = 'diagnostic-clean';
+        diagSpan.textContent = 'Ready';
+      }
+      return true;
+    } catch (err) {
+      this.hasJsErrors = true;
+      const cursorPos = this.editor.getPosition();
+      const line = cursorPos ? cursorPos.lineNumber : 1;
+
+      monaco.editor.setModelMarkers(model, 'js-syntax', [{
+        startLineNumber: line,
+        startColumn: 1,
+        endLineNumber: line,
+        endColumn: model.getLineMaxColumn(line) || 80,
+        message: `SyntaxError: ${err.message}`,
+        severity: monaco.MarkerSeverity.Error
+      }]);
+
+      const diagSpan = document.getElementById('status-diagnostics');
+      if (diagSpan) {
+        diagSpan.className = 'diagnostic-error';
+        diagSpan.textContent = `JS Syntax Error: ${err.message} (L${line})`;
+      }
+      return false;
     }
   }
 
@@ -516,6 +598,39 @@ class IDEApp {
         clearModelDiagnostics(this.editor);
         document.getElementById('status-diagnostics').className = 'diagnostic-clean';
         document.getElementById('status-diagnostics').textContent = 'GLSL: OK (Live Hot-Reloaded)';
+      } else if (data.type === 'runtime:error') {
+        this.hasJsErrors = true;
+        const diagSpan = document.getElementById('status-diagnostics');
+        if (diagSpan) {
+          diagSpan.className = 'diagnostic-error';
+          const loc = data.lineno ? ` (L${data.lineno})` : '';
+          diagSpan.textContent = `JS Error: ${data.message}${loc}`;
+        }
+        if (data.lineno && this.editor && this.activeFilePath && this.activeFilePath.endsWith('.js')) {
+          const model = this.editor.getModel();
+          if (model) {
+            monaco.editor.setModelMarkers(model, 'p5-runtime', [{
+              startLineNumber: data.lineno,
+              startColumn: data.colno || 1,
+              endLineNumber: data.lineno,
+              endColumn: Math.max((data.colno || 1) + 10, model.getLineMaxColumn(data.lineno) || 80),
+              message: data.message,
+              severity: monaco.MarkerSeverity.Error
+            }]);
+          }
+        }
+      } else if (data.type === 'runtime:success') {
+        this.hasJsErrors = false;
+        if (!this.hasShaderErrors) {
+          const diagSpan = document.getElementById('status-diagnostics');
+          if (diagSpan) {
+            diagSpan.className = 'diagnostic-clean';
+            diagSpan.textContent = 'Ready';
+          }
+          if (this.editor && this.editor.getModel()) {
+            monaco.editor.setModelMarkers(this.editor.getModel(), 'p5-runtime', []);
+          }
+        }
       } else if (data.type === 'audio:update') {
         this.latestAudioMetrics = data;
       }
@@ -532,7 +647,7 @@ class IDEApp {
       }
     }
     if (window.electronAPI) {
-      if (window.electronAPI.live) window.electronAPI.live.reload();
+      // NOTE: Never reload liveWindow from restartPreview! Live Stage is isolated and explicitly pushed.
       if (window.electronAPI.preview) window.electronAPI.preview.reload();
     }
   }
@@ -1068,11 +1183,14 @@ class IDEApp {
       return;
     }
 
-    if (this.hasShaderErrors) {
+    const activeCode = this.editor ? this.editor.getValue() : '';
+    const isJsSyntaxValid = this.validateActiveScript(activeCode);
+
+    if (this.hasShaderErrors || this.hasJsErrors || !isJsSyntaxValid) {
       const diagSpan = document.getElementById('status-diagnostics');
       if (diagSpan) {
         diagSpan.className = 'diagnostic-error';
-        diagSpan.textContent = '⚠️ Errore sintassi: correggi prima di inviare al Live Stage!';
+        diagSpan.textContent = '⚠️ Errore sintassi attivo: correggi prima di inviare al Live Stage!';
       }
       return;
     }
