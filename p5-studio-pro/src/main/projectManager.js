@@ -7,6 +7,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const SHADER_EXTENSIONS = new Set([
+  '.glsl', '.vert', '.frag', '.fs', '.vs', '.fsh', '.vsh',
+  '.shader', '.comp', '.geom', '.tesc', '.tese', '.glslf', '.glslv'
+]);
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -15,6 +20,17 @@ const MIME_TYPES = {
   '.glsl': 'text/plain; charset=utf-8',
   '.vert': 'text/plain; charset=utf-8',
   '.frag': 'text/plain; charset=utf-8',
+  '.fs': 'text/plain; charset=utf-8',
+  '.vs': 'text/plain; charset=utf-8',
+  '.fsh': 'text/plain; charset=utf-8',
+  '.vsh': 'text/plain; charset=utf-8',
+  '.shader': 'text/plain; charset=utf-8',
+  '.comp': 'text/plain; charset=utf-8',
+  '.geom': 'text/plain; charset=utf-8',
+  '.tesc': 'text/plain; charset=utf-8',
+  '.tese': 'text/plain; charset=utf-8',
+  '.glslf': 'text/plain; charset=utf-8',
+  '.glslv': 'text/plain; charset=utf-8',
   '.wav': 'audio/wav',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -199,7 +215,7 @@ export class ProjectManager extends EventEmitter {
 
       // Check if it's a shader file directly requested via HTTP: preprocess it!
       const ext = path.extname(filePath).toLowerCase();
-      if (['.frag', '.vert', '.glsl'].includes(ext)) {
+      if (SHADER_EXTENSIONS.has(ext)) {
         const relativeFile = path.relative(this.projectPath, filePath);
         const preprocessed = this.preprocessShader(relativeFile);
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -270,7 +286,7 @@ export class ProjectManager extends EventEmitter {
           const fullPath = path.join(this.projectPath, filename);
           const exists = fs.existsSync(fullPath);
           const ext = path.extname(filename).toLowerCase();
-          const isShader = ['.frag', '.vert', '.glsl'].includes(ext);
+          const isShader = SHADER_EXTENSIONS.has(ext);
 
           this.emit('file:changed', {
             filename,

@@ -245,6 +245,39 @@ test('7. Verify Live Stage and Popout Preview structures, preloads, and UI compo
 });
 
 // ----------------------------------------------------
+// 8. Test Monaco Syntax Highlighting & Code Hints for HTML, CSS, & All Shaders
+// ----------------------------------------------------
+test('8. Verify Syntax Highlighting and Code Hints for HTML, CSS, and universal Shaders', () => {
+  const glslSetupSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/glslMonacoSetup.js'), 'utf-8');
+  assert.ok(glslSetupSrc.includes('SHADER_EXTENSIONS'), 'glslMonacoSetup must export SHADER_EXTENSIONS');
+  assert.ok(glslSetupSrc.includes('isShaderFile'), 'glslMonacoSetup must export isShaderFile');
+  assert.ok(glslSetupSrc.includes('registerHoverProvider'), 'glslMonacoSetup must register hover documentation for GLSL');
+  assert.ok(glslSetupSrc.includes('registerSignatureHelpProvider'), 'glslMonacoSetup must register signature parameter hints for GLSL');
+  assert.ok(glslSetupSrc.includes('raymarch'), 'glslMonacoSetup must include raymarching code snippet');
+  assert.ok(glslSetupSrc.includes('sampleAudioFFT'), 'glslMonacoSetup must include audio FFT helper snippet');
+  assert.ok(glslSetupSrc.includes('GLSL_DOCS'), 'glslMonacoSetup must provide rich GLSL documentation');
+
+  const langServiceSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/ideLanguageService.js'), 'utf-8');
+  assert.ok(langServiceSrc.includes('setupWebAndScriptSupport'), 'ideLanguageService must export setupWebAndScriptSupport');
+  assert.ok(langServiceSrc.includes('registerHoverProvider(\'html\''), 'ideLanguageService must provide HTML hover docs');
+  assert.ok(langServiceSrc.includes('registerHoverProvider(\'css\''), 'ideLanguageService must provide CSS hover docs');
+  assert.ok(langServiceSrc.includes('registerCompletionItemProvider(\'html\''), 'ideLanguageService must provide HTML snippets/hints');
+  assert.ok(langServiceSrc.includes('registerCompletionItemProvider(\'css\''), 'ideLanguageService must provide CSS snippets/hints');
+  assert.ok(langServiceSrc.includes('addExtraLib'), 'ideLanguageService must inject p5.js and ide* TypeScript typings for JS autocompletion');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('setupWebAndScriptSupport'), 'main.js must invoke setupWebAndScriptSupport');
+  assert.ok(mainJsSrc.includes('tag.html'), 'main.js must define HTML token syntax colors');
+  assert.ok(mainJsSrc.includes('property.name.css'), 'main.js must define CSS token syntax colors');
+  assert.ok(mainJsSrc.includes('isShaderFile(ext)'), 'main.js must use isShaderFile for universal shader support');
+
+  const projMgrSrc = fs.readFileSync(path.join(projectRoot, 'src/main/projectManager.js'), 'utf-8');
+  assert.ok(projMgrSrc.includes('SHADER_EXTENSIONS'), 'projectManager must declare SHADER_EXTENSIONS');
+  assert.ok(projMgrSrc.includes('.fsh'), 'projectManager MIME_TYPES must support .fsh');
+  assert.ok(projMgrSrc.includes('.vsh'), 'projectManager MIME_TYPES must support .vsh');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

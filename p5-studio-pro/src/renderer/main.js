@@ -4,7 +4,8 @@ import 'monaco-editor/esm/vs/language/json/monaco.contribution';
 import 'monaco-editor/esm/vs/language/html/monaco.contribution';
 import 'monaco-editor/esm/vs/language/css/monaco.contribution';
 import 'monaco-editor/esm/vs/language/typescript/monaco.contribution';
-import { setupGLSLSupport, setModelDiagnostics, clearModelDiagnostics } from './glslMonacoSetup.js';
+import { setupGLSLSupport, setModelDiagnostics, clearModelDiagnostics, isShaderFile } from './glslMonacoSetup.js';
+import { setupWebAndScriptSupport } from './ideLanguageService.js';
 
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
@@ -65,6 +66,7 @@ class IDEApp {
 
   async init() {
     setupGLSLSupport();
+    setupWebAndScriptSupport();
     this.initMonaco();
     this.initEventListeners();
     this.initAudioMeters();
@@ -120,14 +122,48 @@ class IDEApp {
       base: 'vs-dark',
       inherit: true,
       rules: [
+        // GLSL & Preprocessor
         { token: 'meta.preprocessor', foreground: '00f0ff', fontStyle: 'bold' },
         { token: 'keyword', foreground: 'ff0077', fontStyle: 'bold' },
         { token: 'type', foreground: '00ff88' },
         { token: 'predefined', foreground: 'ffb700' },
         { token: 'variable.predefined', foreground: '00f0ff', fontStyle: 'bold' },
         { token: 'number', foreground: 'ffb700' },
+        { token: 'number.float', foreground: 'ffb700' },
+        { token: 'number.hex', foreground: 'ffb700' },
         { token: 'string', foreground: 'a0ec70' },
-        { token: 'comment', foreground: '546279', fontStyle: 'italic' }
+        { token: 'comment', foreground: '546279', fontStyle: 'italic' },
+        { token: 'operator', foreground: '00e5ff' },
+        { token: 'delimiter', foreground: '8c9ba5' },
+
+        // HTML Syntax Token Colors
+        { token: 'tag', foreground: 'ff0077', fontStyle: 'bold' },
+        { token: 'tag.html', foreground: 'ff0077', fontStyle: 'bold' },
+        { token: 'tag.id', foreground: '00f0ff' },
+        { token: 'tag.class', foreground: '00ff88' },
+        { token: 'metatag', foreground: 'a0ec70' },
+        { token: 'metatag.html', foreground: 'a0ec70' },
+        { token: 'metatag.content.html', foreground: 'e6ecf5' },
+        { token: 'attribute.name', foreground: '00e5ff' },
+        { token: 'attribute.name.html', foreground: '00e5ff' },
+        { token: 'attribute.value', foreground: 'a0ec70' },
+        { token: 'attribute.value.html', foreground: 'a0ec70' },
+        { token: 'delimiter.html', foreground: '788896' },
+
+        // CSS Syntax Token Colors
+        { token: 'tag.css', foreground: 'ff0077', fontStyle: 'bold' },
+        { token: 'attribute.name.css', foreground: '00e5ff' },
+        { token: 'property.name.css', foreground: '00e5ff' },
+        { token: 'attribute.value.css', foreground: '00ff88' },
+        { token: 'attribute.value.unit', foreground: 'ffb700' },
+        { token: 'attribute.value.number', foreground: 'ffb700' },
+        { token: 'string.css', foreground: 'a0ec70' },
+        { token: 'selector.css', foreground: 'ff0077' },
+
+        // JavaScript & TypeScript Token Colors
+        { token: 'identifier.js', foreground: 'e6ecf5' },
+        { token: 'variable.js', foreground: 'e6ecf5' },
+        { token: 'keyword.js', foreground: 'ff0077', fontStyle: 'bold' }
       ],
       colors: {
         'editor.background': '#0d0f12',
@@ -168,7 +204,7 @@ class IDEApp {
         // Update preview dynamically
         const ext = this.activeFilePath.split('.').pop().toLowerCase();
         const frame = document.getElementById('preview-frame');
-        if (['frag', 'vert', 'glsl'].includes(ext)) {
+        if (isShaderFile(ext)) {
           if (frame && frame.contentWindow) {
             frame.contentWindow.postMessage({ type: 'shader:hotReload' }, '*');
           }
@@ -176,7 +212,7 @@ class IDEApp {
             if (window.electronAPI.live) window.electronAPI.live.notifyShaderHotReload();
             if (window.electronAPI.preview) window.electronAPI.preview.notifyShaderHotReload();
           }
-        } else if (['js', 'html', 'json'].includes(ext)) {
+        } else if (['js', 'jsx', 'ts', 'tsx', 'html', 'htm', 'css', 'json'].includes(ext)) {
           this.restartPreview();
           if (window.electronAPI) {
             if (window.electronAPI.live) window.electronAPI.live.reload();
@@ -206,14 +242,16 @@ class IDEApp {
       const ext = relativePath.split('.').pop().toLowerCase();
       let language = 'javascript';
 
-      if (['frag', 'vert', 'glsl', 'fs', 'vs'].includes(ext)) {
+      if (isShaderFile(ext)) {
         language = 'glsl';
       } else if (ext === 'json') {
         language = 'json';
-      } else if (ext === 'html') {
+      } else if (['html', 'htm'].includes(ext)) {
         language = 'html';
       } else if (ext === 'css') {
         language = 'css';
+      } else if (['ts', 'tsx'].includes(ext)) {
+        language = 'typescript';
       }
 
       const fileUri = monaco.Uri.file(relativePath);
@@ -304,7 +342,7 @@ class IDEApp {
   async validateActiveShader() {
     if (!this.activeFilePath) return;
     const ext = this.activeFilePath.split('.').pop().toLowerCase();
-    const isShader = ['frag', 'vert', 'glsl'].includes(ext);
+    const isShader = isShaderFile(ext);
     const diagSpan = document.getElementById('status-diagnostics');
 
     if (!isShader) {
