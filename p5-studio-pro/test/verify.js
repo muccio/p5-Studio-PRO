@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 
 import { ProjectManager } from '../src/main/projectManager.js';
 import { OscBridge } from '../src/main/oscBridge.js';
-import { FfmpegExporter, EXPORT_PROFILES } from '../src/main/ffmpegExporter.js';
+import { FfmpegExporter, EXPORT_PROFILES, decodeAudioFileToFloat32 } from '../src/main/ffmpegExporter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -385,6 +385,101 @@ test('11. Verify p5.js Reference Modal, Dynamic Context Menu Search & Error Clea
   const projMgrSrc = fs.readFileSync(path.join(projectRoot, 'src/main/projectManager.js'), 'utf-8');
   assert.ok(projMgrSrc.includes('credentialless'), 'projectManager must use credentialless for Cross-Origin-Embedder-Policy');
   assert.ok(projMgrSrc.includes('crossorigin="anonymous"'), 'projectManager must inject crossorigin="anonymous" on CDN scripts');
+});
+
+// ----------------------------------------------------
+// 12. Test Editor Appearance Controls (Font Size, Font Family, Window Opacity)
+// ----------------------------------------------------
+test('12. Verify Editor Font Size, Font Family, and Window Opacity Controls', () => {
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="btn-open-appearance"'), 'index.html must have btn-open-appearance trigger');
+  assert.ok(htmlSrc.includes('id="appearance-modal"'), 'index.html must have appearance-modal markup');
+  assert.ok(htmlSrc.includes('id="slider-font-size"'), 'index.html must have slider-font-size');
+  assert.ok(htmlSrc.includes('id="select-font-family"'), 'index.html must have select-font-family');
+  assert.ok(htmlSrc.includes('id="slider-window-opacity"'), 'index.html must have slider-window-opacity');
+  assert.ok(htmlSrc.includes('id="status-font-size"'), 'index.html status bar must show status-font-size');
+  assert.ok(htmlSrc.includes('id="status-window-opacity"'), 'index.html status bar must show status-window-opacity');
+  assert.ok(htmlSrc.includes('id="font-preview-box"'), 'index.html must have live font preview box');
+
+  const mainSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainSrc.includes("ipcMain.handle('window:setOpacity'"), 'main/index.js must handle window:setOpacity');
+  assert.ok(mainSrc.includes("ipcMain.handle('window:getOpacity'"), 'main/index.js must handle window:getOpacity');
+
+  const preloadSrc = fs.readFileSync(path.join(projectRoot, 'src/preload/idePreload.cjs'), 'utf-8');
+  assert.ok(preloadSrc.includes("setOpacity: (opacity) => ipcRenderer.invoke('window:setOpacity'"), 'idePreload must expose setOpacity');
+  assert.ok(preloadSrc.includes("getOpacity: () => ipcRenderer.invoke('window:getOpacity')"), 'idePreload must expose getOpacity');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('initAppearanceControls'), 'main.js must implement initAppearanceControls');
+  assert.ok(mainJsSrc.includes('openAppearanceModal'), 'main.js must implement openAppearanceModal');
+  assert.ok(mainJsSrc.includes('setFontSize'), 'main.js must implement setFontSize');
+  assert.ok(mainJsSrc.includes('setFontFamily'), 'main.js must implement setFontFamily');
+  assert.ok(mainJsSrc.includes('setWindowOpacity'), 'main.js must implement setWindowOpacity');
+  assert.ok(mainJsSrc.includes('p5_studio_font_size'), 'main.js must persist p5_studio_font_size');
+  assert.ok(mainJsSrc.includes('p5_studio_font_family'), 'main.js must persist p5_studio_font_family');
+  assert.ok(mainJsSrc.includes('p5_studio_window_opacity'), 'main.js must persist p5_studio_window_opacity');
+
+  const styleSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/style.css'), 'utf-8');
+  assert.ok(styleSrc.includes('.appearance-modal-card'), 'style.css must style .appearance-modal-card');
+  assert.ok(styleSrc.includes('.font-preview-box'), 'style.css must style .font-preview-box');
+  assert.ok(styleSrc.includes('.btn-preset-opacity'), 'style.css must style .btn-preset-opacity');
+  assert.ok(styleSrc.includes('.status-badge-interactive'), 'style.css must style .status-badge-interactive');
+});
+
+// ----------------------------------------------------
+// 13. Test Deterministic Audio-Reactive Export (Universal Audio Decode + p5.sound Lockstep)
+// ----------------------------------------------------
+await asyncTest('13. Verify universal FFmpeg audio decoding (WAV/MP3) and p5.sound lockstep export hooks', async () => {
+  // Generate a 0.25s 440Hz sine wave WAV and verify decodeAudioFileToFloat32 decodes it accurately
+  const testWavPath = path.join(projectRoot, '.test_tone.wav');
+  const sr = 48000;
+  const numSamples = 12000;
+  const wavBuf = Buffer.alloc(44 + numSamples * 2);
+  wavBuf.write('RIFF', 0);
+  wavBuf.writeUInt32LE(36 + numSamples * 2, 4);
+  wavBuf.write('WAVE', 8);
+  wavBuf.write('fmt ', 12);
+  wavBuf.writeUInt32LE(16, 16);
+  wavBuf.writeUInt16LE(1, 20); // PCM 16-bit
+  wavBuf.writeUInt16LE(1, 22); // Mono
+  wavBuf.writeUInt32LE(sr, 24);
+  wavBuf.writeUInt32LE(sr * 2, 28);
+  wavBuf.writeUInt16LE(2, 32);
+  wavBuf.writeUInt16LE(16, 34);
+  wavBuf.write('data', 36);
+  wavBuf.writeUInt32LE(numSamples * 2, 40);
+  for (let i = 0; i < numSamples; i++) {
+    const val = Math.round(Math.sin((2 * Math.PI * 440 * i) / sr) * 16384);
+    wavBuf.writeInt16LE(val, 44 + i * 2);
+  }
+  fs.writeFileSync(testWavPath, wavBuf);
+
+  try {
+    const decoded = await decodeAudioFileToFloat32(testWavPath, { sampleRate: 48000, maxDurationSec: 2 });
+    assert.ok(decoded && Buffer.isBuffer(decoded.pcmBuffer), 'decodeAudioFileToFloat32 must return pcmBuffer');
+    assert.strictEqual(decoded.sampleRate, 48000);
+    assert.ok(decoded.numSamples >= 11900, 'Decoded sample count must match input audio');
+
+    const floats = new Float32Array(decoded.pcmBuffer.buffer, decoded.pcmBuffer.byteOffset, decoded.numSamples);
+    let peak = 0;
+    for (let i = 0; i < floats.length; i++) peak = Math.max(peak, Math.abs(floats[i]));
+    assert.ok(peak > 0.45 && peak < 0.55, `Decoded 440Hz sine peak should be ~0.5, got ${peak}`);
+  } finally {
+    fs.rmSync(testWavPath, { force: true });
+  }
+
+  const preloadSrc = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(preloadSrc.includes('installP5ExportHooks'), 'sandboxPreload must install universal p5 export hooks');
+  assert.ok(preloadSrc.includes('installP5SoundExportHooks'), 'sandboxPreload must hook p5.FFT / p5.Amplitude / p5.SoundFile');
+  assert.ok(preloadSrc.includes('WebAudioOfflineFFT'), 'sandboxPreload must implement W3C Web Audio Blackman offline FFT');
+  assert.ok(preloadSrc.includes("ipcRenderer.invoke('export:decodeAudio'"), 'sandboxPreload must decode export audio via IPC');
+
+  const mainSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainSrc.includes("ipcMain.handle('export:decodeAudio'"), 'main/index.js must handle export:decodeAudio');
+  assert.ok(mainSrc.includes('setAudioMuted(true)'), 'exportWindow must mute speaker output during offline export');
+
+  const rendererSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(rendererSrc.includes("'mp3'"), 'Export audio selector must allow .mp3 files');
 });
 
 // ----------------------------------------------------

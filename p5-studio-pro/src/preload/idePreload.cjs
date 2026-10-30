@@ -14,7 +14,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
-    close: () => ipcRenderer.invoke('window:close')
+    close: () => ipcRenderer.invoke('window:close'),
+    setOpacity: (opacity) => ipcRenderer.invoke('window:setOpacity', opacity),
+    getOpacity: () => ipcRenderer.invoke('window:getOpacity')
   },
 
   // --- Project Management ---

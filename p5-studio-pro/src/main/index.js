@@ -4,7 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { ProjectManager } from './projectManager.js';
 import { OscBridge } from './oscBridge.js';
-import { FfmpegExporter } from './ffmpegExporter.js';
+import { FfmpegExporter, decodeAudioFileToFloat32 } from './ffmpegExporter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,6 +112,15 @@ async function createMainWindow() {
       mainWindow.webContents.toggleDevTools();
     }
   });
+
+  // Prevent arbitrary navigation or accidental file drop navigation in main IDE window
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('http://localhost:5173') || url.startsWith('http://127.0.0.1:5173') || url.includes('dist/renderer/index.html')) {
+      return;
+    }
+    event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     console.error(`[Main] MainWindow failed to load: ${errorDescription} (${errorCode}) at ${validatedURL}`);
@@ -465,6 +474,20 @@ function setupIPC() {
   ipcMain.handle('window:close', () => {
     if (mainWindow) mainWindow.close();
   });
+  ipcMain.handle('window:setOpacity', (event, opacity) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const clamped = Math.max(0.15, Math.min(1.0, Number(opacity) || 1.0));
+      mainWindow.setOpacity(clamped);
+      return clamped;
+    }
+    return 1.0;
+  });
+  ipcMain.handle('window:getOpacity', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      return mainWindow.getOpacity();
+    }
+    return 1.0;
+  });
 
   // --- Project Management ---
   ipcMain.handle('project:getInfo', () => {
@@ -686,6 +709,23 @@ function setupIPC() {
     }
   });
 
+  // Decode any audio file (MP3, WAV, OGG, FLAC, M4A, AAC, AIFF) to Float32 PCM for deterministic offline DSP
+  ipcMain.handle('export:decodeAudio', async (event, { audioPath, sampleRate = 48000, maxDurationSec = 0 } = {}) => {
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      return null;
+    }
+    return await decodeAudioFileToFloat32(audioPath, { sampleRate, maxDurationSec });
+  });
+
+  // Read recorded OSC JSON file from absolute path for deterministic offline replay
+  ipcMain.handle('export:readOscFile', async (event, oscPath) => {
+    if (!oscPath || !fs.existsSync(oscPath)) {
+      return null;
+    }
+    const raw = await fs.promises.readFile(oscPath, 'utf-8');
+    return JSON.parse(raw);
+  });
+
   // --- Live Stage Output Window IPC ---
   ipcMain.handle('live:open', (event, options) => openLiveWindow(options));
   ipcMain.handle('live:close', () => closeLiveWindow());
@@ -836,6 +876,9 @@ async function startDeterministicExport(options) {
       webSecurity: false
     }
   });
+
+  // Mute real-time speaker output in the offscreen export window
+  exportWindow.webContents.setAudioMuted(true);
 
   exportWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
     console.log(`[ExportWin ${level}] ${message} (${sourceId}:${line})`);

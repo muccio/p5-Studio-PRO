@@ -70,6 +70,13 @@ class IDEApp {
     this.pendingLiveType = null;
     this.hasShaderErrors = false;
     this.hasJsErrors = false;
+
+    // Editor typography & window appearance state
+    const savedFontSize = parseInt(localStorage.getItem('p5_studio_font_size') || '13', 10);
+    this.currentFontSize = (!isNaN(savedFontSize) && savedFontSize >= 10 && savedFontSize <= 36) ? savedFontSize : 13;
+    this.currentFontFamily = localStorage.getItem('p5_studio_font_family') || "JetBrains Mono, 'Fira Code', Menlo, Consolas, monospace";
+    const savedOpacity = parseFloat(localStorage.getItem('p5_studio_window_opacity') || '1.0');
+    this.currentWindowOpacity = (!isNaN(savedOpacity) && savedOpacity >= 0.2 && savedOpacity <= 1.0) ? savedOpacity : 1.0;
   }
 
   async init() {
@@ -83,6 +90,12 @@ class IDEApp {
     this.initP5VersionControls();
     this.initP5LibrariesModal();
     this.initP5ReferenceModal();
+    this.initAppearanceControls();
+
+    // Restore window opacity from saved preferences
+    if (this.currentWindowOpacity !== 1.0) {
+      this.setWindowOpacity(this.currentWindowOpacity);
+    }
 
     // Fetch initial project info and file tree
     if (window.electronAPI) {
@@ -189,8 +202,8 @@ class IDEApp {
 
     this.editor = monaco.editor.create(container, {
       theme: 'p5StudioDark',
-      fontSize: 13,
-      fontFamily: 'JetBrains Mono, Fira Code, Menlo, Consolas, monospace',
+      fontSize: this.currentFontSize || 13,
+      fontFamily: this.currentFontFamily || "JetBrains Mono, 'Fira Code', Menlo, Consolas, monospace",
       automaticLayout: true,
       minimap: { enabled: true },
       lineNumbers: 'on',
@@ -288,6 +301,10 @@ class IDEApp {
     window.addEventListener('resize', () => {
       this.editor.layout();
     });
+
+    // Prevent accidental drag-drop navigation across IDE workspace
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => e.preventDefault());
   }
 
   async openFile(relativePath) {
@@ -1699,7 +1716,286 @@ class IDEApp {
   }
 
   // =========================================================================
-  // 11. Event Listeners Wiring
+  // 11. Appearance & Typography Controls (Font Size, Family, Window Opacity)
+  // =========================================================================
+  openAppearanceModal() {
+    const modal = document.getElementById('appearance-modal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      this.syncAppearanceUI();
+    }
+  }
+
+  closeAppearanceModal() {
+    const modal = document.getElementById('appearance-modal');
+    if (modal) {
+      modal.classList.add('hidden');
+    }
+  }
+
+  syncAppearanceUI() {
+    // 1. Font Size
+    const sliderFont = document.getElementById('slider-font-size');
+    const badgeFont = document.getElementById('badge-font-size');
+    const statusFont = document.getElementById('status-font-size');
+    if (sliderFont) sliderFont.value = this.currentFontSize;
+    if (badgeFont) badgeFont.textContent = `${this.currentFontSize}px`;
+    if (statusFont) statusFont.textContent = `${this.currentFontSize}px`;
+
+    // 2. Font Family
+    const selectFont = document.getElementById('select-font-family');
+    const customWrap = document.getElementById('custom-font-wrapper');
+    const customInput = document.getElementById('input-custom-font');
+    if (selectFont) {
+      let found = false;
+      for (const opt of selectFont.options) {
+        if (opt.value === this.currentFontFamily) {
+          selectFont.value = this.currentFontFamily;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        selectFont.value = 'custom';
+        if (customWrap) customWrap.classList.remove('hidden');
+        if (customInput) customInput.value = this.currentFontFamily.replace(/, monospace/g, '').replace(/['"]/g, '');
+      } else {
+        if (customWrap) customWrap.classList.add('hidden');
+      }
+    }
+
+    // 3. Live Preview Box
+    this.updateFontPreview();
+
+    // 4. Window Opacity
+    const sliderOpacity = document.getElementById('slider-window-opacity');
+    const badgeOpacity = document.getElementById('badge-window-opacity');
+    const statusOpacity = document.getElementById('status-window-opacity');
+    const pct = Math.round(this.currentWindowOpacity * 100);
+    if (sliderOpacity) sliderOpacity.value = pct;
+    if (badgeOpacity) badgeOpacity.textContent = `${pct}%`;
+    if (statusOpacity) statusOpacity.textContent = `${pct}%`;
+
+    // Highlight active preset button
+    document.querySelectorAll('.btn-preset-opacity').forEach((btn) => {
+      const btnVal = Math.round(parseFloat(btn.getAttribute('data-opacity')) * 100);
+      btn.classList.toggle('active', btnVal === pct);
+    });
+  }
+
+  updateFontPreview() {
+    const previewBox = document.getElementById('font-preview-box');
+    const previewMeta = document.getElementById('font-preview-meta');
+    if (previewBox) {
+      previewBox.style.fontFamily = this.currentFontFamily;
+      previewBox.style.fontSize = `${this.currentFontSize}px`;
+    }
+    if (previewMeta) {
+      let displayName = this.currentFontFamily.split(',')[0].replace(/['"]/g, '').trim();
+      previewMeta.textContent = `${displayName} • ${this.currentFontSize}px`;
+    }
+  }
+
+  setFontSize(newSize) {
+    const size = Math.max(10, Math.min(36, parseInt(newSize, 10) || 13));
+    this.currentFontSize = size;
+    localStorage.setItem('p5_studio_font_size', String(size));
+
+    if (this.editor) {
+      this.editor.updateOptions({ fontSize: size });
+    }
+
+    const slider = document.getElementById('slider-font-size');
+    const badge = document.getElementById('badge-font-size');
+    const status = document.getElementById('status-font-size');
+    if (slider && Number(slider.value) !== size) slider.value = size;
+    if (badge) badge.textContent = `${size}px`;
+    if (status) status.textContent = `${size}px`;
+
+    this.updateFontPreview();
+  }
+
+  setFontFamily(newFamily) {
+    if (!newFamily) return;
+    this.currentFontFamily = newFamily;
+    localStorage.setItem('p5_studio_font_family', newFamily);
+
+    if (this.editor) {
+      this.editor.updateOptions({ fontFamily: newFamily });
+    }
+
+    this.updateFontPreview();
+  }
+
+  async setWindowOpacity(opacity) {
+    const val = Math.max(0.2, Math.min(1.0, parseFloat(opacity) || 1.0));
+    this.currentWindowOpacity = val;
+    const pct = Math.round(val * 100);
+    localStorage.setItem('p5_studio_window_opacity', String(val));
+
+    // Call native Electron window opacity via IPC
+    if (window.electronAPI && window.electronAPI.window && window.electronAPI.window.setOpacity) {
+      try {
+        await window.electronAPI.window.setOpacity(val);
+      } catch (err) {
+        console.warn('[Window Opacity] IPC error:', err);
+      }
+    }
+
+    // Set CSS variable
+    document.documentElement.style.setProperty('--window-opacity', String(val));
+
+    const slider = document.getElementById('slider-window-opacity');
+    const badge = document.getElementById('badge-window-opacity');
+    const status = document.getElementById('status-window-opacity');
+    if (slider && Number(slider.value) !== pct) slider.value = pct;
+    if (badge) badge.textContent = `${pct}%`;
+    if (status) status.textContent = `${pct}%`;
+
+    // Highlight active preset button
+    document.querySelectorAll('.btn-preset-opacity').forEach((btn) => {
+      const btnVal = Math.round(parseFloat(btn.getAttribute('data-opacity')) * 100);
+      btn.classList.toggle('active', btnVal === pct);
+    });
+  }
+
+  initAppearanceControls() {
+    const modal = document.getElementById('appearance-modal');
+    const btnOpenHeader = document.getElementById('btn-open-appearance');
+    const btnCloseModal = document.getElementById('btn-close-appearance-modal');
+    const btnDoneModal = document.getElementById('btn-done-appearance');
+    const btnReset = document.getElementById('btn-reset-appearance');
+
+    // Status bar triggers
+    const btnStatusGear = document.getElementById('btn-status-appearance');
+    const badgeStatusFont = document.getElementById('status-font-size');
+    const badgeStatusOpacity = document.getElementById('status-window-opacity');
+    const btnQuickDec = document.getElementById('btn-quick-font-decrease');
+    const btnQuickInc = document.getElementById('btn-quick-font-increase');
+
+    // Modal controls
+    const sliderFont = document.getElementById('slider-font-size');
+    const btnFontDec = document.getElementById('btn-font-dec');
+    const btnFontInc = document.getElementById('btn-font-inc');
+    const selectFont = document.getElementById('select-font-family');
+    const customFontWrap = document.getElementById('custom-font-wrapper');
+    const inputCustomFont = document.getElementById('input-custom-font');
+    const sliderOpacity = document.getElementById('slider-window-opacity');
+
+    // Open modal triggers
+    if (btnOpenHeader) btnOpenHeader.addEventListener('click', () => this.openAppearanceModal());
+    if (btnStatusGear) btnStatusGear.addEventListener('click', () => this.openAppearanceModal());
+    if (badgeStatusFont) badgeStatusFont.addEventListener('click', () => this.openAppearanceModal());
+    if (badgeStatusOpacity) badgeStatusOpacity.addEventListener('click', () => this.openAppearanceModal());
+
+    // Close modal triggers
+    if (btnCloseModal) btnCloseModal.addEventListener('click', () => this.closeAppearanceModal());
+    if (btnDoneModal) btnDoneModal.addEventListener('click', () => this.closeAppearanceModal());
+
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) this.closeAppearanceModal();
+      });
+    }
+
+    // Keyboard navigation (Esc to close) & Zoom shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+        this.closeAppearanceModal();
+      }
+      // Global zoom/font shortcuts: Cmd/Ctrl + '+' / '=' or Cmd/Ctrl + '-'
+      if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        this.setFontSize(this.currentFontSize + 1);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === '-') {
+        e.preventDefault();
+        this.setFontSize(this.currentFontSize - 1);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+        // Reset zoom to default 13px
+        e.preventDefault();
+        this.setFontSize(13);
+      }
+    });
+
+    // Font size controls
+    if (sliderFont) {
+      sliderFont.addEventListener('input', (e) => {
+        this.setFontSize(parseInt(e.target.value, 10));
+      });
+    }
+    if (btnFontDec) {
+      btnFontDec.addEventListener('click', () => this.setFontSize(this.currentFontSize - 1));
+    }
+    if (btnFontInc) {
+      btnFontInc.addEventListener('click', () => this.setFontSize(this.currentFontSize + 1));
+    }
+    if (btnQuickDec) {
+      btnQuickDec.addEventListener('click', () => this.setFontSize(this.currentFontSize - 1));
+    }
+    if (btnQuickInc) {
+      btnQuickInc.addEventListener('click', () => this.setFontSize(this.currentFontSize + 1));
+    }
+
+    // Font family controls
+    if (selectFont) {
+      selectFont.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val === 'custom') {
+          if (customFontWrap) customFontWrap.classList.remove('hidden');
+          if (inputCustomFont) {
+            inputCustomFont.focus();
+            if (inputCustomFont.value.trim()) {
+              this.setFontFamily(`"${inputCustomFont.value.trim()}", monospace`);
+            }
+          }
+        } else {
+          if (customFontWrap) customFontWrap.classList.add('hidden');
+          this.setFontFamily(val);
+        }
+      });
+    }
+
+    if (inputCustomFont) {
+      inputCustomFont.addEventListener('input', (e) => {
+        const name = e.target.value.trim();
+        if (name) {
+          this.setFontFamily(`"${name}", monospace`);
+        }
+      });
+    }
+
+    // Window opacity slider
+    if (sliderOpacity) {
+      sliderOpacity.addEventListener('input', (e) => {
+        const pct = parseInt(e.target.value, 10);
+        this.setWindowOpacity(pct / 100);
+      });
+    }
+
+    // Opacity presets
+    document.querySelectorAll('.btn-preset-opacity').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const op = parseFloat(btn.getAttribute('data-opacity'));
+        this.setWindowOpacity(op);
+      });
+    });
+
+    // Reset button
+    if (btnReset) {
+      btnReset.addEventListener('click', () => {
+        this.setFontSize(13);
+        this.setFontFamily("JetBrains Mono, 'Fira Code', Menlo, Consolas, monospace");
+        this.setWindowOpacity(1.0);
+        this.syncAppearanceUI();
+      });
+    }
+
+    // Initial sync
+    this.syncAppearanceUI();
+  }
+
+  // =========================================================================
+  // 12. Event Listeners Wiring
   // =========================================================================
   initEventListeners() {
     // Global hotkey: Cmd+Enter or Ctrl+Enter -> Push to Live Stage
@@ -1736,8 +2032,10 @@ class IDEApp {
     document.getElementById('btn-browse-audio').addEventListener('click', async () => {
       if (window.electronAPI && window.electronAPI.export.showOpenDialog) {
         const filePath = await window.electronAPI.export.showOpenDialog({
-          title: 'Select Lossless Audio WAV Track',
-          filters: [{ name: 'Audio WAV (*.wav)', extensions: ['wav'] }],
+          title: 'Select Audio Track for Deterministic Export',
+          filters: [
+            { name: 'Audio Files (*.mp3, *.wav, *.ogg, *.flac, *.m4a, *.aac, *.aiff)', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'aiff'] }
+          ],
           properties: ['openFile']
         });
         if (filePath) {

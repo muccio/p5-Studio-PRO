@@ -282,23 +282,356 @@ if (isExportMode) {
       if (ipcRenderer) ipcRenderer.invoke('preview:exitFullscreen');
     }
   });
+}
 
-  // Intercept p5's createCanvas to force exact export target dimensions & pixelDensity(1)
-  let _p5CreateCanvas = null;
-  Object.defineProperty(window, 'createCanvas', {
-    configurable: true,
-    enumerable: true,
-    get() {
-      return _p5CreateCanvas;
-    },
-    set(fn) {
-      _p5CreateCanvas = function (w, h, renderer) {
-        if (typeof window.pixelDensity === 'function') {
-          window.pixelDensity(1);
-        }
-        console.log(`[Export] Forcing canvas creation to exact export preset: ${exportTargetW}x${exportTargetH} (sketch requested ${w}x${h})`);
-        return fn.call(this, exportTargetW, exportTargetH, renderer);
+let currentExportFrame = 0;
+let currentExportTimeMs = 0;
+const trackedExportSoundFiles = new Set();
+
+function installP5SoundExportHooks(P5) {
+  if (!isExportMode || !P5) return;
+
+  // 1. Hook p5.SoundFile so isPlaying() / currentTime() / buffer tracking work deterministically offline
+  if (P5.SoundFile && P5.SoundFile.prototype && !P5.SoundFile.__studioExportHooked) {
+    P5.SoundFile.__studioExportHooked = true;
+    const sfProto = P5.SoundFile.prototype;
+
+    if (typeof P5.prototype.loadSound === 'function') {
+      const origLoadSound = P5.prototype.loadSound;
+      P5.prototype.loadSound = function () {
+        const sf = origLoadSound.apply(this, arguments);
+        if (sf) trackedExportSoundFiles.add(sf);
+        return sf;
       };
+    }
+
+    const origPlay = sfProto.play;
+    sfProto.play = function () {
+      trackedExportSoundFiles.add(this);
+      this._exportPlaying = true;
+      try {
+        return origPlay ? origPlay.apply(this, arguments) : undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+
+    const origLoop = sfProto.loop;
+    sfProto.loop = function () {
+      trackedExportSoundFiles.add(this);
+      this._exportPlaying = true;
+      this._exportLooping = true;
+      try {
+        return origLoop ? origLoop.apply(this, arguments) : undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+
+    const origStop = sfProto.stop;
+    sfProto.stop = function () {
+      this._exportPlaying = false;
+      try {
+        return origStop ? origStop.apply(this, arguments) : undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+
+    const origPause = sfProto.pause;
+    sfProto.pause = function () {
+      this._exportPlaying = false;
+      try {
+        return origPause ? origPause.apply(this, arguments) : undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+
+    const origIsPlaying = sfProto.isPlaying;
+    sfProto.isPlaying = function () {
+      if (this._exportPlaying !== undefined) return Boolean(this._exportPlaying);
+      return origIsPlaying ? origIsPlaying.apply(this, arguments) : true;
+    };
+
+    const origCurrentTime = sfProto.currentTime;
+    sfProto.currentTime = function () {
+      const tSec = currentExportTimeMs / 1000.0;
+      const dur = (this.buffer && this.buffer.duration) ? this.buffer.duration : 0;
+      if (dur > 0) {
+        return this._exportLooping ? (tSec % dur) : Math.min(tSec, dur);
+      }
+      return origCurrentTime ? tSec : tSec;
+    };
+  }
+
+  // 2. Hook p5.FFT for sample-accurate W3C Web Audio AnalyserNode lockstep rendering
+  if (P5.FFT && P5.FFT.prototype && !P5.FFT.__studioExportHooked) {
+    P5.FFT.__studioExportHooked = true;
+    const fftProto = P5.FFT.prototype;
+
+    const origSetInput = fftProto.setInput;
+    fftProto.setInput = function (snd) {
+      this._exportInput = snd || null;
+      if (snd && snd.buffer) trackedExportSoundFiles.add(snd);
+      try {
+        return origSetInput ? origSetInput.apply(this, arguments) : undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+
+    const origSmooth = fftProto.smooth;
+    fftProto.smooth = function (s) {
+      if (typeof s === 'number') {
+        this.smoothing = Math.max(0.0, Math.min(0.999, s));
+      }
+      return origSmooth ? origSmooth.apply(this, arguments) : this.smoothing;
+    };
+
+    fftProto.analyze = function () {
+      let requestedScale = null;
+      for (let i = 0; i < arguments.length; i++) {
+        if (typeof arguments[i] === 'number' && arguments[i] >= 16) {
+          this.bins = arguments[i];
+          if (this.analyser) {
+            try { this.analyser.fftSize = this.bins * 2; } catch (e) {}
+          }
+        } else if (typeof arguments[i] === 'string') {
+          requestedScale = arguments[i].toLowerCase();
+        }
+      }
+
+      const bins = Math.max(16, Math.min(16384, this.bins || (this.analyser ? this.analyser.frequencyBinCount : 1024)));
+      const fftSize = bins * 2;
+      const smoothing = (typeof this.smoothing === 'number')
+        ? Math.max(0.0, Math.min(0.999, this.smoothing))
+        : (this.analyser ? this.analyser.smoothingTimeConstant : 0.8);
+      const minDb = (this.analyser && typeof this.analyser.minDecibels === 'number') ? this.analyser.minDecibels : -100.0;
+      const maxDb = (this.analyser && typeof this.analyser.maxDecibels === 'number') ? this.analyser.maxDecibels : -30.0;
+      const dbRange = Math.max(1.0, maxDb - minDb);
+
+      if (!this._exportSmoothedMag || this._exportSmoothedMag.length !== bins) {
+        this._exportSmoothedMag = new Float32Array(bins);
+        this._exportLastFrame = -1;
+      }
+
+      if (this._exportLastFrame !== currentExportFrame) {
+        this._exportLastFrame = currentExportFrame;
+        const src = resolveExportAudioSource(this._exportInput);
+        const slice = sliceExportPcmWindow(src, fftSize, currentExportTimeMs);
+        const rawMag = getWebAudioOfflineFFT(fftSize).forwardMagnitudes(slice);
+
+        for (let k = 0; k < bins; k++) {
+          this._exportSmoothedMag[k] = smoothing * this._exportSmoothedMag[k] + (1.0 - smoothing) * rawMag[k];
+        }
+      }
+
+      if (requestedScale === 'db') {
+        if (!(this.freqDomain instanceof Float32Array) || this.freqDomain.length !== bins) {
+          this.freqDomain = new Float32Array(bins);
+        }
+        for (let k = 0; k < bins; k++) {
+          const mag = this._exportSmoothedMag[k];
+          this.freqDomain[k] = mag > 1e-20 ? (20.0 * Math.log10(mag)) : -140.0;
+        }
+        return this.freqDomain;
+      }
+
+      if (!(this.freqDomain instanceof Uint8Array) || this.freqDomain.length !== bins) {
+        this.freqDomain = new Uint8Array(bins);
+      }
+      const resultArray = new Array(bins);
+      for (let k = 0; k < bins; k++) {
+        const mag = this._exportSmoothedMag[k];
+        const db = mag > 1e-20 ? (20.0 * Math.log10(mag)) : -1000.0;
+        const byteVal = Math.max(0, Math.min(255, Math.floor(((db - minDb) / dbRange) * 255.0)));
+        this.freqDomain[k] = byteVal;
+        resultArray[k] = byteVal;
+      }
+      return resultArray;
+    };
+
+    const origGetEnergy = fftProto.getEnergy;
+    if (typeof origGetEnergy === 'function') {
+      fftProto.getEnergy = function () {
+        if (this._exportLastFrame !== currentExportFrame || !this.freqDomain || !this.freqDomain.length) {
+          this.analyze();
+        }
+        return origGetEnergy.apply(this, arguments);
+      };
+    }
+
+    const origGetCentroid = fftProto.getCentroid;
+    if (typeof origGetCentroid === 'function') {
+      fftProto.getCentroid = function () {
+        if (this._exportLastFrame !== currentExportFrame || !this.freqDomain || !this.freqDomain.length) {
+          this.analyze();
+        }
+        return origGetCentroid.apply(this, arguments);
+      };
+    }
+
+    fftProto.waveform = function () {
+      let bins = this.bins || (this.analyser ? this.analyser.frequencyBinCount : 1024);
+      let precisionStr = null;
+      for (let i = 0; i < arguments.length; i++) {
+        if (typeof arguments[i] === 'number' && arguments[i] >= 16) {
+          bins = arguments[i];
+        } else if (typeof arguments[i] === 'string') {
+          precisionStr = arguments[i];
+        }
+      }
+
+      const src = resolveExportAudioSource(this._exportInput);
+      const slice = sliceExportPcmWindow(src, bins, currentExportTimeMs);
+
+      if (precisionStr) {
+        if (!(this.timeDomain instanceof Float32Array) || this.timeDomain.length !== bins) {
+          this.timeDomain = new Float32Array(bins);
+        }
+        this.timeDomain.set(slice);
+        return this.timeDomain;
+      }
+
+      if (!(this.timeDomain instanceof Uint8Array) || this.timeDomain.length !== bins) {
+        this.timeDomain = new Uint8Array(bins);
+      }
+      const out = new Array(bins);
+      for (let i = 0; i < bins; i++) {
+        const s = Math.max(-1.0, Math.min(1.0, slice[i]));
+        const byteVal = Math.max(0, Math.min(255, Math.round((s + 1.0) * 127.5)));
+        this.timeDomain[i] = byteVal;
+        out[i] = (byteVal / 255.0) * 2.0 - 1.0;
+      }
+      return out;
+    };
+  }
+
+  // 3. Hook p5.Amplitude for deterministic offline RMS level analysis
+  if (P5.Amplitude && P5.Amplitude.prototype && !P5.Amplitude.__studioExportHooked) {
+    P5.Amplitude.__studioExportHooked = true;
+    const ampProto = P5.Amplitude.prototype;
+
+    const origAmpSetInput = ampProto.setInput;
+    ampProto.setInput = function (snd) {
+      this._exportInput = snd || null;
+      if (snd && snd.buffer) trackedExportSoundFiles.add(snd);
+      try {
+        return origAmpSetInput ? origAmpSetInput.apply(this, arguments) : undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+
+    const origAmpSmooth = ampProto.smooth;
+    ampProto.smooth = function (s) {
+      if (typeof s === 'number') {
+        this.smoothing = Math.max(0.0, Math.min(0.999, s));
+      }
+      return origAmpSmooth ? origAmpSmooth.apply(this, arguments) : this.smoothing;
+    };
+
+    const origToggleNormalize = ampProto.toggleNormalize;
+    ampProto.toggleNormalize = function (boolean) {
+      if (typeof boolean === 'boolean') {
+        this.normalize = boolean;
+      } else {
+        this.normalize = !this.normalize;
+      }
+      return origToggleNormalize ? origToggleNormalize.apply(this, arguments) : undefined;
+    };
+
+    ampProto.getLevel = function () {
+      const windowSize = this.bufferSize || 2048;
+      const smoothing = (typeof this.smoothing === 'number') ? Math.max(0.0, Math.min(0.999, this.smoothing)) : 0.0;
+
+      if (this._exportLastFrame !== currentExportFrame) {
+        this._exportLastFrame = currentExportFrame;
+        const src = resolveExportAudioSource(this._exportInput);
+        const slice = sliceExportPcmWindow(src, windowSize, currentExportTimeMs);
+        let sumSq = 0.0;
+        for (let i = 0; i < slice.length; i++) {
+          sumSq += slice[i] * slice[i];
+        }
+        const rms = Math.sqrt(sumSq / Math.max(1, slice.length));
+        const prevVol = this._exportVol || 0.0;
+        const vol = Math.max(rms, prevVol * smoothing);
+        this._exportVol = vol;
+        this.volMax = Math.max(this.volMax || 0.001, vol);
+      }
+
+      const vol = this._exportVol || 0.0;
+      if (this.normalize) {
+        return Math.max(0.0, Math.min(1.0, vol / (this.volMax || 0.001)));
+      }
+      return vol;
+    };
+  }
+}
+
+function installP5ExportHooks(P5) {
+  if (!isExportMode || !P5) return;
+  installP5SoundExportHooks(P5);
+
+  if (P5.__studioCoreExportHooked) return;
+  P5.__studioCoreExportHooked = true;
+
+  if (P5.prototype && typeof P5.prototype.registerMethod === 'function') {
+    P5.prototype.registerMethod('init', function () {
+      window.__capturedP5Instance = this;
+      installP5SoundExportHooks(window.p5 || P5);
+    });
+  }
+
+  if (P5.prototype && typeof P5.prototype.createCanvas === 'function') {
+    const origCreateCanvas = P5.prototype.createCanvas;
+    P5.prototype.createCanvas = function (w, h, renderer) {
+      window.__capturedP5Instance = this;
+      if (typeof this.pixelDensity === 'function') {
+        this.pixelDensity(1);
+      }
+      console.log(`[Export] Forcing canvas creation to exact export preset: ${exportTargetW}x${exportTargetH} (sketch requested ${w}x${h})`);
+      return origCreateCanvas.call(this, exportTargetW, exportTargetH, renderer);
+    };
+  }
+
+  if (P5.prototype && typeof P5.prototype._setup === 'function') {
+    const origInternalSetup = P5.prototype._setup;
+    P5.prototype._setup = function () {
+      window.__capturedP5Instance = this;
+      installP5SoundExportHooks(window.p5 || P5);
+      const res = origInternalSetup.apply(this, arguments);
+      if (typeof this.noLoop === 'function') {
+        this.noLoop();
+      }
+      return res;
+    };
+  }
+}
+
+if (isExportMode) {
+  // Intercept window.p5 assignment so both Global Mode and Instance Mode sketches are captured immediately
+  let _globalP5Constructor = window.p5;
+  try {
+    Object.defineProperty(window, 'p5', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return _globalP5Constructor;
+      },
+      set(val) {
+        _globalP5Constructor = val;
+        if (val) {
+          installP5ExportHooks(val);
+        }
+      }
+    });
+  } catch (e) {}
+
+  window.addEventListener('DOMContentLoaded', () => {
+    if (window.p5) {
+      installP5ExportHooks(window.p5);
     }
   });
 
@@ -319,25 +652,6 @@ if (isExportMode) {
       };
     }
   });
-
-  // Automatically pause the draw loop in setup() so deterministic lockstep controls frame advancement
-  let _userSetup = null;
-  Object.defineProperty(window, 'setup', {
-    configurable: true,
-    enumerable: true,
-    get() {
-      return _userSetup;
-    },
-    set(fn) {
-      _userSetup = function () {
-        const res = fn.apply(this, arguments);
-        if (typeof window.noLoop === 'function') {
-          window.noLoop();
-        }
-        return res;
-      };
-    }
-  });
 }
 
 // =========================================================================
@@ -345,6 +659,7 @@ if (isExportMode) {
 // =========================================================================
 const origGetContext = HTMLCanvasElement.prototype.getContext;
 let activeGLContext = null;
+let activeGLCanvas = null;
 let activeCanvas = null;
 
 HTMLCanvasElement.prototype.getContext = function (contextType, contextAttributes) {
@@ -362,22 +677,22 @@ HTMLCanvasElement.prototype.getContext = function (contextType, contextAttribute
     const gl = origGetContext.call(this, contextType, enforcedAttributes);
     if (gl) {
       activeGLContext = gl;
+      activeGLCanvas = this;
       activeCanvas = this;
-      if (isExportMode) {
-        activeCanvas.width = exportTargetW;
-        activeCanvas.height = exportTargetH;
-        gl.viewport(0, 0, exportTargetW, exportTargetH);
+      if (isExportMode && (!this.className || this.classList.contains('p5Canvas') || !document.querySelector('canvas.p5Canvas'))) {
+        gl.viewport(0, 0, this.width || exportTargetW, this.height || exportTargetH);
       }
       hookGLContext(gl);
     }
     return gl;
   }
-  const ctx = origGetContext.call(this, contextType, contextAttributes);
-  if (ctx && (contextType === '2d')) {
-    activeCanvas = this;
-    if (isExportMode) {
-      activeCanvas.width = exportTargetW;
-      activeCanvas.height = exportTargetH;
+  const attrs2d = (isExportMode && contextType === '2d')
+    ? Object.assign({ willReadFrequently: true }, contextAttributes || {})
+    : contextAttributes;
+  const ctx = origGetContext.call(this, contextType, attrs2d);
+  if (ctx && contextType === '2d') {
+    if (!activeCanvas || (this.classList && this.classList.contains('p5Canvas'))) {
+      activeCanvas = this;
     }
   }
   return ctx;
@@ -479,6 +794,190 @@ class CooleyTukeyFFT {
 
     return this.spectrum;
   }
+}
+
+/**
+ * W3C Web Audio API RealtimeAnalyser-compatible FFT (Blackman window, 1/N scaling, power-of-2 size)
+ * Used in offline deterministic export so p5.FFT.analyze() matches live Web Audio 1:1.
+ */
+class WebAudioOfflineFFT {
+  constructor(size = 2048) {
+    let pow2 = 32;
+    while (pow2 < size && pow2 < 32768) pow2 <<= 1;
+    this.size = pow2;
+
+    const bits = Math.round(Math.log2(this.size));
+    this.bitRev = new Uint32Array(this.size);
+    for (let i = 0; i < this.size; i++) {
+      let rev = 0;
+      for (let j = 0; j < bits; j++) {
+        rev = (rev << 1) | ((i >> j) & 1);
+      }
+      this.bitRev[i] = rev;
+    }
+
+    this.cosTable = new Float32Array(this.size / 2);
+    this.sinTable = new Float32Array(this.size / 2);
+    for (let i = 0; i < this.size / 2; i++) {
+      const angle = (-2.0 * Math.PI * i) / this.size;
+      this.cosTable[i] = Math.cos(angle);
+      this.sinTable[i] = Math.sin(angle);
+    }
+
+    // W3C Web Audio AnalyserNode Blackman window (alpha = 0.16)
+    this.blackmanWindow = new Float32Array(this.size);
+    for (let i = 0; i < this.size; i++) {
+      this.blackmanWindow[i] =
+        0.42 -
+        0.5 * Math.cos((2.0 * Math.PI * i) / this.size) +
+        0.08 * Math.cos((4.0 * Math.PI * i) / this.size);
+    }
+
+    this.real = new Float32Array(this.size);
+    this.imag = new Float32Array(this.size);
+    this.magnitudes = new Float32Array(this.size / 2);
+  }
+
+  forwardMagnitudes(timeDomainSamples) {
+    const N = this.size;
+    for (let i = 0; i < N; i++) {
+      const rev = this.bitRev[i];
+      const s = i < timeDomainSamples.length ? timeDomainSamples[i] : 0.0;
+      this.real[rev] = s * this.blackmanWindow[i];
+      this.imag[rev] = 0.0;
+    }
+
+    for (let len = 2; len <= N; len <<= 1) {
+      const halfLen = len >> 1;
+      const step = N / len;
+      for (let i = 0; i < N; i += len) {
+        let tableIdx = 0;
+        for (let j = 0; j < halfLen; j++) {
+          const c = this.cosTable[tableIdx];
+          const s = this.sinTable[tableIdx];
+          tableIdx += step;
+
+          const uR = this.real[i + j];
+          const uI = this.imag[i + j];
+          const vR = this.real[i + j + halfLen] * c - this.imag[i + j + halfLen] * s;
+          const vI = this.real[i + j + halfLen] * s + this.imag[i + j + halfLen] * c;
+
+          this.real[i + j] = uR + vR;
+          this.imag[i + j] = uI + vI;
+          this.real[i + j + halfLen] = uR - vR;
+          this.imag[i + j + halfLen] = uI - vI;
+        }
+      }
+    }
+
+    const halfN = N >> 1;
+    const invN = 1.0 / N;
+    for (let k = 0; k < halfN; k++) {
+      this.magnitudes[k] = Math.hypot(this.real[k], this.imag[k]) * invN;
+    }
+    return this.magnitudes;
+  }
+}
+
+const webAudioOfflineFFTCache = new Map();
+function getWebAudioOfflineFFT(fftSize) {
+  let pow2 = 32;
+  while (pow2 < fftSize && pow2 < 32768) pow2 <<= 1;
+  let inst = webAudioOfflineFFTCache.get(pow2);
+  if (!inst) {
+    inst = new WebAudioOfflineFFT(pow2);
+    webAudioOfflineFFTCache.set(pow2, inst);
+  }
+  return inst;
+}
+
+function extractAudioBufferMonoPcm(audioBuffer) {
+  if (!audioBuffer || typeof audioBuffer.getChannelData !== 'function' || !audioBuffer.length) {
+    return null;
+  }
+  if (audioBuffer.__cachedExportMono) {
+    return audioBuffer.__cachedExportMono;
+  }
+  const channels = Math.max(1, audioBuffer.numberOfChannels || 1);
+  const length = audioBuffer.length;
+  const mono = new Float32Array(length);
+  for (let ch = 0; ch < channels; ch++) {
+    const chData = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      mono[i] += chData[i];
+    }
+  }
+  if (channels > 1) {
+    const invCh = 1.0 / channels;
+    for (let i = 0; i < length; i++) {
+      mono[i] *= invCh;
+    }
+  }
+  const cached = { pcm: mono, sampleRate: audioBuffer.sampleRate || 48000 };
+  audioBuffer.__cachedExportMono = cached;
+  return cached;
+}
+
+function resolveExportAudioSource(inputObj) {
+  // Multi-stem support: if >1 distinct SoundFiles exist and a specific SoundFile was passed to setInput()
+  if (trackedExportSoundFiles.size > 1 && inputObj && inputObj.buffer) {
+    const stem = extractAudioBufferMonoPcm(inputObj.buffer);
+    if (stem) {
+      return { pcm: stem.pcm, sampleRate: stem.sampleRate, looping: Boolean(inputObj._exportLooping) };
+    }
+  }
+
+  // Primary: decoded audio file explicitly selected in Export Video modal (synced 1:1 with FFmpeg muxing)
+  if (window.ideAudio && window.ideAudio.offlinePcm && window.ideAudio.offlinePcm.length > 0) {
+    return {
+      pcm: window.ideAudio.offlinePcm,
+      sampleRate: window.ideAudio.sampleRate || 48000,
+      looping: Boolean(inputObj && inputObj._exportLooping)
+    };
+  }
+
+  // Fallback 1: SoundFile explicitly connected via setInput(sound)
+  if (inputObj && inputObj.buffer) {
+    const connected = extractAudioBufferMonoPcm(inputObj.buffer);
+    if (connected) {
+      return { pcm: connected.pcm, sampleRate: connected.sampleRate, looping: Boolean(inputObj._exportLooping) };
+    }
+  }
+
+  // Fallback 2: Any p5.SoundFile loaded in preload()/setup()
+  for (const sf of trackedExportSoundFiles) {
+    if (sf && sf.buffer) {
+      const extracted = extractAudioBufferMonoPcm(sf.buffer);
+      if (extracted) {
+        return { pcm: extracted.pcm, sampleRate: extracted.sampleRate, looping: Boolean(sf._exportLooping) };
+      }
+    }
+  }
+
+  return null;
+}
+
+function sliceExportPcmWindow(source, windowSize, timeMs) {
+  const slice = new Float32Array(windowSize);
+  if (!source || !source.pcm || source.pcm.length === 0) {
+    return slice;
+  }
+  const pcm = source.pcm;
+  const total = pcm.length;
+  const endSample = Math.floor((timeMs / 1000.0) * source.sampleRate);
+  const startSample = endSample - windowSize;
+
+  for (let i = 0; i < windowSize; i++) {
+    let idx = startSample + i;
+    if (idx < 0) {
+      slice[i] = 0.0;
+    } else if (idx >= total) {
+      slice[i] = source.looping ? pcm[idx % total] : 0.0;
+    } else {
+      slice[i] = pcm[idx];
+    }
+  }
+  return slice;
 }
 
 // =========================================================================
@@ -594,14 +1093,35 @@ class IdeAudioEngine {
     }
 
     console.log(`[ideAudio] Loaded offline WAV: ${totalSamples} samples @ ${this.sampleRate}Hz`);
+    this._lastOfflineFrame = -1;
   }
 
-  update(virtualFrame = 0, targetFps = 60) {
-    if (isExportMode && this.offlinePcm) {
-      this._updateOffline(virtualFrame, targetFps);
-    } else {
-      this._updateLive();
+  setOfflinePcm(pcmFloat32, sampleRate = 48000) {
+    if (!pcmFloat32 || !pcmFloat32.length) return;
+    this.offlinePcm = pcmFloat32 instanceof Float32Array ? pcmFloat32 : new Float32Array(pcmFloat32);
+    this.sampleRate = sampleRate || 48000;
+    this.offlineSmoothedFreq.fill(0);
+    this.peakHoldFreq.fill(0);
+    this._lastOfflineFrame = -1;
+    console.log(`[ideAudio] Loaded offline PCM: ${this.offlinePcm.length} samples @ ${this.sampleRate}Hz`);
+  }
+
+  update(virtualFrame, targetFps) {
+    if (isExportMode) {
+      if (!this.offlinePcm) {
+        const fallback = resolveExportAudioSource(null);
+        if (fallback && fallback.pcm) {
+          this.setOfflinePcm(fallback.pcm, fallback.sampleRate);
+        }
+      }
+      if (this.offlinePcm) {
+        const frameToUse = typeof virtualFrame === 'number' ? virtualFrame : currentExportFrame;
+        const fpsToUse = typeof targetFps === 'number' ? targetFps : exportTargetFps;
+        this._updateOffline(frameToUse, fpsToUse);
+        return;
+      }
     }
+    this._updateLive();
   }
 
   _updateLive() {
@@ -653,6 +1173,9 @@ class IdeAudioEngine {
   }
 
   _updateOffline(frameN, fps) {
+    if (this._lastOfflineFrame === frameN) return;
+    this._lastOfflineFrame = frameN;
+
     const endSample = Math.floor((frameN / fps) * this.sampleRate);
     const startSample = endSample - this.fftSize;
 
@@ -662,8 +1185,8 @@ class IdeAudioEngine {
       slice[i] = (idx >= 0 && idx < this.offlinePcm.length) ? this.offlinePcm[idx] : 0.0;
     }
 
-    // Run Hann + Cooley-Tukey FFT
-    const rawSpectrum = this.offlineFFT.forward(slice);
+    // Run Blackman Web Audio-compatible FFT (matches live AnalyserNode dB scale)
+    const rawSpectrum = getWebAudioOfflineFFT(this.fftSize).forwardMagnitudes(slice);
 
     // Exponential smoothing relative to frame N-1
     for (let i = 0; i < 1024; i++) {
@@ -677,23 +1200,25 @@ class IdeAudioEngine {
     }
     this.currentRMS = Math.sqrt(sumSquares / this.fftSize);
 
-    // Compute frequency bands
-    const binHz = (this.sampleRate / 2) / 1024;
-    this.bands.sub = this._calcBandOffline(20, 60, binHz);
-    this.bands.bass = this._calcBandOffline(60, 250, binHz);
-    this.bands.lowMid = this._calcBandOffline(250, 500, binHz);
-    this.bands.mid = this._calcBandOffline(500, 2000, binHz);
-    this.bands.highMid = this._calcBandOffline(2000, 4000, binHz);
-    this.bands.treble = this._calcBandOffline(4000, 20000, binHz);
-
-    // Update time & freq data buffers
+    // Update time & freq data buffers using W3C Web Audio dB range [-100dB, -30dB] -> [0..255]
     for (let i = 0; i < 1024; i++) {
-      const byteFreq = Math.min(255, Math.floor(this.offlineSmoothedFreq[i] * 255.0 * 4.0));
+      const mag = this.offlineSmoothedFreq[i];
+      const db = mag > 1e-20 ? (20.0 * Math.log10(mag)) : -1000.0;
+      const byteFreq = Math.max(0, Math.min(255, Math.floor(((db - (-100.0)) / 70.0) * 255.0)));
       this.liveFreqData[i] = byteFreq;
 
       const rawSample = (i < this.fftSize) ? slice[i] : 0.0;
       this.liveTimeData[i] = Math.max(0, Math.min(255, Math.floor((rawSample + 1.0) * 127.5)));
     }
+
+    // Compute normalized frequency bands (0..1) directly from liveFreqData so live and offline match 1:1
+    const binHz = (this.sampleRate / 2) / 1024;
+    this.bands.sub = this._calcBandLive(20, 60, binHz);
+    this.bands.bass = this._calcBandLive(60, 250, binHz);
+    this.bands.lowMid = this._calcBandLive(250, 500, binHz);
+    this.bands.mid = this._calcBandLive(500, 2000, binHz);
+    this.bands.highMid = this._calcBandLive(2000, 4000, binHz);
+    this.bands.treble = this._calcBandLive(4000, 20000, binHz);
   }
 
   _calcBandOffline(lowHz, highHz, binHz) {
@@ -1077,40 +1602,116 @@ window.addEventListener('DOMContentLoaded', () => {
 if (isExportMode) {
   console.log('[Sandbox] Running in Deterministic Offline Export Mode');
 
-  // Override time functions for lockstep determinism
-  let virtualFrame = 0;
-  let virtualTimeMs = 0;
   const frameIntervalMs = 1000.0 / exportTargetFps;
+  const origPerfNow = window.performance.now.bind(window.performance);
+  const origDateNow = Date.now.bind(Date);
+  let lockstepClockActive = false;
 
-  window.performance.now = () => virtualTimeMs;
-  Date.now = () => 1700000000000 + Math.floor(virtualTimeMs);
+  window.performance.now = () => (lockstepClockActive ? currentExportTimeMs : origPerfNow());
+  Date.now = () => (lockstepClockActive ? (1700000000000 + Math.floor(currentExportTimeMs)) : origDateNow());
+
+  const getExportP5Instance = () =>
+    window.__capturedP5Instance ||
+    window._p5Instance ||
+    window.p5Instance ||
+    (window.p5 && window.p5.instance) ||
+    null;
 
   window.addEventListener('load', async () => {
-    // Poll for p5 instance to be mounted and setup completed
-    let p5Instance = window._p5Instance || window.p5Instance || (window.p5 && window.p5.instance);
-    for (let i = 0; i < 40; i++) {
-      p5Instance = window._p5Instance || window.p5Instance || (window.p5 && window.p5.instance);
-      if (p5Instance && (p5Instance._setupDone || (document.querySelector('canvas') && typeof p5Instance.redraw === 'function'))) {
+    if (window.p5) {
+      installP5ExportHooks(window.p5);
+    }
+
+    // Poll until p5 preload() (e.g. loadSound('audio.mp3')) and setup() have fully completed (up to 15s)
+    let p5Instance = getExportP5Instance();
+    for (let i = 0; i < 300; i++) {
+      if (window.p5) {
+        installP5ExportHooks(window.p5);
+      }
+      p5Instance = getExportP5Instance();
+      if (p5Instance && p5Instance._setupDone) {
         break;
       }
-      await new Promise(r => setTimeout(r, 50));
+      if (!p5Instance && i > 40 && document.querySelector('canvas') && typeof window.redraw === 'function') {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
     }
 
-    // Load offline audio WAV file if provided
+    // Match sampleRate to p5.sound's AudioContext if present so p5.FFT.getEnergy() Nyquist bins align 1:1
+    let targetAudioRate = 48000;
+    try {
+      if (typeof window.getAudioContext === 'function') {
+        const ctx = window.getAudioContext();
+        if (ctx && ctx.sampleRate) targetAudioRate = ctx.sampleRate;
+      } else if (window.p5 && window.p5.soundOut && window.p5.soundOut.audiocontext) {
+        targetAudioRate = window.p5.soundOut.audiocontext.sampleRate || 48000;
+      }
+    } catch (e) {}
+
+    // Decode offline audio track (MP3, WAV, OGG, FLAC, M4A, AAC, AIFF) via FFmpeg IPC
     if (exportAudioPath) {
-      try {
-        const audioBuffer = await fetch(exportAudioPath).then(r => r.arrayBuffer());
-        window.ideAudio.loadOfflineWav(audioBuffer);
-      } catch (err) {
-        console.warn('[Sandbox] Failed to load export audio WAV:', err);
+      let decodedOk = false;
+      if (ipcRenderer) {
+        try {
+          const decoded = await ipcRenderer.invoke('export:decodeAudio', {
+            audioPath: exportAudioPath,
+            sampleRate: targetAudioRate,
+            maxDurationSec: Math.ceil(exportTotalFrames / exportTargetFps)
+          });
+          if (decoded && decoded.pcmBuffer) {
+            const u8 = decoded.pcmBuffer instanceof Uint8Array
+              ? decoded.pcmBuffer
+              : new Uint8Array(decoded.pcmBuffer);
+            const sampleCount = Math.floor(u8.byteLength / 4);
+            const pcmFloat32 = (u8.byteOffset % 4 === 0)
+              ? new Float32Array(u8.buffer, u8.byteOffset, sampleCount)
+              : new Float32Array(u8.slice().buffer, 0, sampleCount);
+            window.ideAudio.setOfflinePcm(pcmFloat32, decoded.sampleRate || targetAudioRate);
+            decodedOk = true;
+          }
+        } catch (err) {
+          console.warn('[Sandbox] IPC FFmpeg audio decode failed, trying Web Audio fallback:', err);
+        }
+      }
+
+      if (!decodedOk) {
+        try {
+          const audioBuffer = await fetch(exportAudioPath).then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.arrayBuffer();
+          });
+          const AudioContextClass = window.OfflineAudioContext || window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) {
+            const tmpCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: targetAudioRate });
+            const decodedBuf = await tmpCtx.decodeAudioData(audioBuffer.slice(0));
+            const extracted = extractAudioBufferMonoPcm(decodedBuf);
+            if (extracted) {
+              window.ideAudio.setOfflinePcm(extracted.pcm, extracted.sampleRate);
+            }
+            try { await tmpCtx.close(); } catch (e) {}
+          } else {
+            window.ideAudio.loadOfflineWav(audioBuffer);
+          }
+        } catch (err) {
+          console.warn('[Sandbox] Failed to load export audio track:', err);
+        }
       }
     }
 
-    // Load offline OSC events if provided
+    // Load offline OSC events if provided (via IPC for absolute OS paths, with fetch fallback)
     if (exportOscPath) {
       try {
-        const oscJson = await fetch(exportOscPath).then(r => r.json());
-        window.ideOSC.loadOfflineEvents(oscJson);
+        let oscJson = null;
+        if (ipcRenderer) {
+          oscJson = await ipcRenderer.invoke('export:readOscFile', exportOscPath);
+        }
+        if (!oscJson) {
+          oscJson = await fetch(exportOscPath).then((r) => r.json());
+        }
+        if (oscJson) {
+          window.ideOSC.loadOfflineEvents(oscJson);
+        }
       } catch (err) {
         console.warn('[Sandbox] Failed to load export OSC JSON:', err);
       }
@@ -1123,14 +1724,14 @@ if (isExportMode) {
         while ((!record.p5Shader._vertSrc || !record.p5Shader._fragSrc) && attempts < 40) {
           try {
             const [vText, fText] = await Promise.all([
-              fetch(record.vertPath).then(r => r.text()),
-              fetch(record.fragPath).then(r => r.text())
+              fetch(record.vertPath).then((r) => r.text()),
+              fetch(record.fragPath).then((r) => r.text())
             ]);
             record.p5Shader._vertSrc = vText;
             record.p5Shader._fragSrc = fText;
             break;
           } catch (e) {
-            await new Promise(r => setTimeout(r, 50));
+            await new Promise((r) => setTimeout(r, 50));
             attempts++;
           }
         }
@@ -1139,10 +1740,9 @@ if (isExportMode) {
 
     // Lockstep Frame Export Loop
     setTimeout(async () => {
-      // Re-query p5Instance in case it was assigned inside setup()
-      p5Instance = window._p5Instance || window.p5Instance || (window.p5 && window.p5.instance);
+      p5Instance = getExportP5Instance();
       await runLockstepExport(p5Instance);
-    }, 200);
+    }, 100);
   });
 
   async function runLockstepExport(p5Instance) {
@@ -1152,64 +1752,108 @@ if (isExportMode) {
     const flippedBuffer = new Uint8Array(W * H * 4);
     const bytesPerRow = W * 4;
 
-    // Force p5 instance & WebGL context to strictly W x H native resolution
+    if (window.p5) {
+      installP5ExportHooks(window.p5);
+    }
+
+    // Force p5 instance to strictly W x H native resolution with pixelDensity(1)
     if (p5Instance) {
-      if (p5Instance.pixelDensity) p5Instance.pixelDensity(1);
-      if (p5Instance.resizeCanvas) p5Instance.resizeCanvas(W, H, false);
-      p5Instance.width = W;
-      p5Instance.height = H;
-      if (p5Instance.noLoop) {
+      if (typeof p5Instance.noLoop === 'function') {
         p5Instance.noLoop();
       }
-    }
-
-    const canvas = activeCanvas || document.querySelector('canvas');
-    if (canvas) {
-      canvas.width = W;
-      canvas.height = H;
-      canvas.style.width = `${W}px`;
-      canvas.style.height = `${H}px`;
-    }
-
-    if (activeGLContext) {
-      activeGLContext.viewport(0, 0, W, H);
-    }
-
-    // Warmup frame: trigger initial redraw to guarantee shaders and textures are compiled
-    if (p5Instance && p5Instance.redraw) {
-      p5Instance.width = W;
-      p5Instance.height = H;
-      p5Instance.frameCount = 0;
-      p5Instance.redraw();
-      if (activeGLContext) {
-        activeGLContext.finish();
+      if (typeof p5Instance.pixelDensity === 'function' && p5Instance._pixelDensity !== 1) {
+        p5Instance.pixelDensity(1);
       }
+      if (typeof p5Instance.resizeCanvas === 'function' && (p5Instance.width !== W || p5Instance.height !== H)) {
+        p5Instance.resizeCanvas(W, H, false);
+      }
+      if (typeof p5Instance._setProperty === 'function') {
+        p5Instance._setProperty('width', W);
+        p5Instance._setProperty('height', H);
+      } else {
+        p5Instance.width = W;
+        p5Instance.height = H;
+      }
+    } else if (typeof window.noLoop === 'function') {
+      window.noLoop();
     }
+
+    const mainCanvas =
+      (p5Instance && p5Instance.canvas) ||
+      document.querySelector('canvas.p5Canvas') ||
+      document.querySelector('main canvas') ||
+      activeCanvas ||
+      document.querySelector('canvas');
+
+    if (mainCanvas) {
+      // Only resize DOM bitmap if dimensions differ so 2D CanvasRenderingContext2D state is preserved
+      if (mainCanvas.width !== W) mainCanvas.width = W;
+      if (mainCanvas.height !== H) mainCanvas.height = H;
+      mainCanvas.style.width = `${W}px`;
+      mainCanvas.style.height = `${H}px`;
+    }
+
+    const gl =
+      (p5Instance && p5Instance._renderer && p5Instance._renderer.GL) ||
+      (mainCanvas && mainCanvas === activeGLCanvas ? activeGLContext : null);
+
+    if (gl) {
+      gl.viewport(0, 0, W, H);
+    }
+
+    // Activate deterministic virtual clock
+    currentExportFrame = 0;
+    currentExportTimeMs = 0;
+    lockstepClockActive = true;
+
+    // Warmup frame ONLY for WebGL canvases to pre-compile shaders & textures
+    if (gl && p5Instance && typeof p5Instance.redraw === 'function') {
+      currentExportFrame = -1;
+      currentExportTimeMs = 0;
+      p5Instance.redraw();
+      gl.finish();
+      // Reset audio smoothing state after shader warmup so Frame 0 starts cleanly
+      window.ideAudio.offlineSmoothedFreq.fill(0);
+      window.ideAudio.peakHoldFreq.fill(0);
+      window.ideAudio._lastOfflineFrame = -1;
+    }
+
+    const ctx2d = (!gl && mainCanvas) ? mainCanvas.getContext('2d') : null;
 
     for (let f = 0; f < exportTotalFrames; f++) {
-      virtualFrame = f;
-      virtualTimeMs = f * frameIntervalMs;
+      currentExportFrame = f;
+      currentExportTimeMs = f * frameIntervalMs;
 
       // 1. Advance virtual time and audio DSP
-      window.ideAudio.update(virtualFrame, exportTargetFps);
+      window.ideAudio.update(currentExportFrame, exportTargetFps);
 
       // 2. Replay OSC events for this virtual time
-      window.ideOSC.updateOfflineTime(virtualTimeMs);
+      window.ideOSC.updateOfflineTime(currentExportTimeMs);
 
       // 3. Trigger deterministic frame redraw
       if (p5Instance) {
-        p5Instance.width = W;
-        p5Instance.height = H;
-        p5Instance.frameCount = virtualFrame;
-        p5Instance.deltaTime = frameIntervalMs;
-        if (p5Instance.redraw) {
+        if (typeof p5Instance._setProperty === 'function') {
+          p5Instance._setProperty('width', W);
+          p5Instance._setProperty('height', H);
+          p5Instance._setProperty('frameCount', currentExportFrame);
+          p5Instance._setProperty('deltaTime', frameIntervalMs);
+        } else {
+          p5Instance.width = W;
+          p5Instance.height = H;
+          p5Instance.frameCount = currentExportFrame;
+          p5Instance.deltaTime = frameIntervalMs;
+        }
+        if (typeof p5Instance.redraw === 'function') {
           p5Instance.redraw();
         }
+      } else if (typeof window.redraw === 'function') {
+        window.frameCount = currentExportFrame;
+        window.deltaTime = frameIntervalMs;
+        window.redraw();
       }
 
       // 4. Capture Frame Pixels (WebGL vs 2D)
-      if (activeGLContext) {
-        const gl = activeGLContext;
+      if (gl) {
         gl.viewport(0, 0, W, H);
         gl.finish();
         gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, rawBuffer);
@@ -1220,9 +1864,8 @@ if (isExportMode) {
           const dstOffset = (H - 1 - y) * bytesPerRow;
           flippedBuffer.set(rawBuffer.subarray(srcOffset, srcOffset + bytesPerRow), dstOffset);
         }
-      } else if (activeCanvas) {
-        const ctx = activeCanvas.getContext('2d');
-        const imgData = ctx.getImageData(0, 0, W, H);
+      } else if (ctx2d) {
+        const imgData = ctx2d.getImageData(0, 0, W, H);
         flippedBuffer.set(imgData.data);
       }
 

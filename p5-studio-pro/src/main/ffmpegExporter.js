@@ -47,6 +47,53 @@ export const EXPORT_PROFILES = {
   }
 };
 
+/**
+ * Decode any audio file supported by FFmpeg (MP3, WAV, OGG, FLAC, M4A, AAC, AIFF, MP4)
+ * into mono 32-bit IEEE Float PCM (f32le) for deterministic frame-accurate offline FFT/DSP.
+ */
+export function decodeAudioFileToFloat32(audioPath, { sampleRate = 48000, maxDurationSec = 0 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      return reject(new Error(`Audio file not found: ${audioPath}`));
+    }
+
+    const targetRate = Math.max(8000, Math.min(192000, Math.round(sampleRate || 48000)));
+    const args = ['-v', 'error', '-i', audioPath];
+    if (maxDurationSec > 0) {
+      args.push('-t', String(Math.ceil(maxDurationSec) + 2));
+    }
+    args.push(
+      '-vn',
+      '-ac', '1',
+      '-ar', String(targetRate),
+      '-f', 'f32le',
+      '-acodec', 'pcm_f32le',
+      'pipe:1'
+    );
+
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdoutChunks = [];
+    let stderrLogs = '';
+
+    proc.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
+    proc.stderr.on('data', (chunk) => { stderrLogs += chunk.toString(); });
+
+    proc.on('error', (err) => reject(err));
+    proc.on('close', (code) => {
+      if (code === 0) {
+        const pcmBuffer = Buffer.concat(stdoutChunks);
+        resolve({
+          pcmBuffer,
+          sampleRate: targetRate,
+          numSamples: Math.floor(pcmBuffer.byteLength / 4)
+        });
+      } else {
+        reject(new Error(`FFmpeg audio decode failed (code ${code}): ${stderrLogs.slice(-500)}`));
+      }
+    });
+  });
+}
+
 export class FfmpegExporter extends EventEmitter {
   constructor() {
     super();

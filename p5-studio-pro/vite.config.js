@@ -19,9 +19,14 @@ export default defineConfig({
     outDir: resolve(__dirname, 'dist/renderer'),
     emptyOutDir: true,
     target: 'esnext',
+    modulePreload: false,
+    cssCodeSplit: false,
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'src/renderer/index.html')
+      },
+      output: {
+        inlineDynamicImports: true
       }
     }
   },
