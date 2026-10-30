@@ -1,6 +1,6 @@
 {
   "name": "p5-studio-pro",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Production-ready cross-platform desktop IDE for p5.js and GLSL Shaders with Dual Audio Engine and OSC Bridge",
   "main": "src/main/index.js",
   "type": "module",

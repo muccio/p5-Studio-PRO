@@ -94,6 +94,27 @@ export function decodeAudioFileToFloat32(audioPath, { sampleRate = 48000, maxDur
   });
 }
 
+/**
+ * Probe exact duration in seconds of an audio/media file via FFmpeg headers.
+ */
+export function getAudioDurationSec(audioPath) {
+  return new Promise((resolve) => {
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      return resolve(null);
+    }
+    const proc = spawn(ffmpegPath, ['-hide_banner', '-i', audioPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderrLogs = '';
+    proc.stderr.on('data', (chunk) => { stderrLogs += chunk.toString(); });
+    proc.on('error', () => resolve(null));
+    proc.on('close', () => {
+      const m = stderrLogs.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (!m) return resolve(null);
+      const secs = parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseFloat(m[3]);
+      resolve(Number.isFinite(secs) && secs > 0 ? secs : null);
+    });
+  });
+}
+
 export class FfmpegExporter extends EventEmitter {
   constructor() {
     super();
@@ -149,9 +170,14 @@ export class FfmpegExporter extends EventEmitter {
       fs.mkdirSync(outDir, { recursive: true });
     }
 
+    const exactDurationSec = (totalFrames / fps).toFixed(6);
+
     // Build FFmpeg command arguments
+    // Note: Do NOT use -shortest here — libx264's multi-frame lookahead buffer causes FFmpeg 6
+    // to prematurely cut the audio stream at stdin EOF before flushing buffered video frames.
     const ffmpegArgs = [
       '-y', // Overwrite output file if exists
+      '-thread_queue_size', '4096',
       '-f', 'rawvideo',
       '-vcodec', 'rawvideo',
       '-s', `${width}x${height}`,
@@ -162,17 +188,25 @@ export class FfmpegExporter extends EventEmitter {
 
     let hasAudio = false;
     if (audioPath && fs.existsSync(audioPath)) {
-      ffmpegArgs.push('-i', audioPath);
+      ffmpegArgs.push('-thread_queue_size', '4096', '-t', exactDurationSec, '-i', audioPath);
       hasAudio = true;
+    }
+
+    if (hasAudio) {
+      ffmpegArgs.push('-map', '0:v:0', '-map', '1:a:0');
     }
 
     // Append video encoding parameters
     ffmpegArgs.push(...selectedProfile.videoArgs);
 
+    if (selectedProfile.ext === '.mp4') {
+      ffmpegArgs.push('-movflags', '+faststart');
+    }
+
     if (hasAudio) {
+      ffmpegArgs.push('-af', 'aresample=async=1:first_pts=0');
       ffmpegArgs.push(...selectedProfile.audioArgs);
-      // Ensure muxing matches video duration
-      ffmpegArgs.push('-shortest');
+      ffmpegArgs.push('-t', exactDurationSec);
     }
 
     ffmpegArgs.push(outputPath);

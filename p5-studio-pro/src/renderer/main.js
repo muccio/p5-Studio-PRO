@@ -2040,6 +2040,12 @@ class IDEApp {
         });
         if (filePath) {
           document.getElementById('export-audio-path').value = filePath;
+          if (window.electronAPI.export.getAudioDuration) {
+            const dur = await window.electronAPI.export.getAudioDuration(filePath);
+            if (typeof dur === 'number' && dur > 0) {
+              document.getElementById('export-duration-input').value = (Math.round(dur * 10) / 10).toString();
+            }
+          }
         }
       }
     });

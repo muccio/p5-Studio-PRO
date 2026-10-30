@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   export: {
     showSaveDialog: (options) => ipcRenderer.invoke('dialog:showSaveDialog', options),
     showOpenDialog: (options) => ipcRenderer.invoke('dialog:showOpenDialog', options),
+    getAudioDuration: (audioPath) => ipcRenderer.invoke('export:getAudioDuration', audioPath),
     start: (options) => ipcRenderer.invoke('export:start', options),
     cancel: () => ipcRenderer.invoke('export:cancel'),
     onProgress: (callback) => {

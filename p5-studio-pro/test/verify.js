@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 
 import { ProjectManager } from '../src/main/projectManager.js';
 import { OscBridge } from '../src/main/oscBridge.js';
-import { FfmpegExporter, EXPORT_PROFILES, decodeAudioFileToFloat32 } from '../src/main/ffmpegExporter.js';
+import { FfmpegExporter, EXPORT_PROFILES, decodeAudioFileToFloat32, getAudioDurationSec } from '../src/main/ffmpegExporter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -480,6 +480,68 @@ await asyncTest('13. Verify universal FFmpeg audio decoding (WAV/MP3) and p5.sou
 
   const rendererSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
   assert.ok(rendererSrc.includes("'mp3'"), 'Export audio selector must allow .mp3 files');
+});
+
+// ----------------------------------------------------
+// 14. Test Full-Length Audio Muxing Without Premature Truncation
+// ----------------------------------------------------
+await asyncTest('14. Verify exported MP4 retains full-length audio stream without x264 lookahead truncation', async () => {
+  const testWavPath = path.join(projectRoot, '.test_long_audio.wav');
+  const testMp4Path = path.join(projectRoot, '.test_full_audio_render.mp4');
+  const sr = 48000;
+  const wavDurationSec = 15;
+  const numSamples = sr * wavDurationSec;
+  const wavBuf = Buffer.alloc(44 + numSamples * 2);
+  wavBuf.write('RIFF', 0);
+  wavBuf.writeUInt32LE(36 + numSamples * 2, 4);
+  wavBuf.write('WAVE', 8);
+  wavBuf.write('fmt ', 12);
+  wavBuf.writeUInt32LE(16, 16);
+  wavBuf.writeUInt16LE(1, 20);
+  wavBuf.writeUInt16LE(1, 22);
+  wavBuf.writeUInt32LE(sr, 24);
+  wavBuf.writeUInt32LE(sr * 2, 28);
+  wavBuf.writeUInt16LE(2, 32);
+  wavBuf.writeUInt16LE(16, 34);
+  wavBuf.write('data', 36);
+  wavBuf.writeUInt32LE(numSamples * 2, 40);
+  for (let i = 0; i < numSamples; i++) {
+    wavBuf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 330 * i) / sr) * 12000), 44 + i * 2);
+  }
+  fs.writeFileSync(testWavPath, wavBuf);
+
+  try {
+    const probedWavDur = await getAudioDurationSec(testWavPath);
+    assert.ok(probedWavDur >= 14.9 && probedWavDur <= 15.1, `Expected ~15s WAV duration, got ${probedWavDur}`);
+
+    const exporter = new FfmpegExporter();
+    exporter.startExport({
+      width: 160,
+      height: 120,
+      fps: 60,
+      totalFrames: 600, // 10.0 seconds (triggers x264 50-frame lookahead buffer)
+      outputPath: testMp4Path,
+      audioPath: testWavPath,
+      profile: 'h264-master'
+    });
+
+    const frameBuf = Buffer.alloc(160 * 120 * 4, 90);
+    for (let f = 0; f < 600; f++) {
+      await exporter.pushFrame(frameBuf, true);
+    }
+    await exporter.finishExport();
+
+    // Decode audio stream of the rendered MP4 to verify it was NOT truncated at ~2.94s
+    const decodedMp4Audio = await decodeAudioFileToFloat32(testMp4Path, { sampleRate: 48000 });
+    const actualAudioSec = decodedMp4Audio.numSamples / 48000;
+    assert.ok(
+      actualAudioSec >= 9.9,
+      `Exported MP4 audio stream was truncated (${actualAudioSec.toFixed(2)}s instead of 10.00s)!`
+    );
+  } finally {
+    fs.rmSync(testWavPath, { force: true });
+    fs.rmSync(testMp4Path, { force: true });
+  }
 });
 
 // ----------------------------------------------------

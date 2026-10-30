@@ -4,7 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { ProjectManager } from './projectManager.js';
 import { OscBridge } from './oscBridge.js';
-import { FfmpegExporter, decodeAudioFileToFloat32 } from './ffmpegExporter.js';
+import { FfmpegExporter, decodeAudioFileToFloat32, getAudioDurationSec } from './ffmpegExporter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -715,6 +715,14 @@ function setupIPC() {
       return null;
     }
     return await decodeAudioFileToFloat32(audioPath, { sampleRate, maxDurationSec });
+  });
+
+  // Probe audio file duration in seconds so Export Modal can match full track length
+  ipcMain.handle('export:getAudioDuration', async (event, audioPath) => {
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      return null;
+    }
+    return await getAudioDurationSec(audioPath);
   });
 
   // Read recorded OSC JSON file from absolute path for deterministic offline replay
