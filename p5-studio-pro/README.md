@@ -1,5 +1,7 @@
 # p5-Studio-PRO
 
+> 📖 **Manuale Utente Ufficiale:** Consulta la [Guida Completa & Manuale Utente](../../README.md) nel repository principale per istruzioni dettagliate su installazione, interfaccia, risoluzione Gatekeeper su Mac, audio-reactive shaders ed export video 4K.
+
 **p5-Studio-PRO** is a production-ready, cross-platform desktop IDE engineered specifically for **p5.js & GLSL Shaders** (macOS & Windows).
 
 It unites professional audio-reactive creative coding, multi-file GLSL shader development, bidirectional UDP OSC control, and deterministic non-real-time frame-by-frame video export via FFmpeg with 100% audio and visual lockstep synchronization.
