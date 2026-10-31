@@ -6,6 +6,8 @@
     "dev": "npm --prefix p5-studio-pro run dev",
     "build": "npm --prefix p5-studio-pro run build",
     "dist:mac": "npm --prefix p5-studio-pro run dist:mac",
+    "dist:mac:x64": "npm --prefix p5-studio-pro run dist:mac:x64",
+    "dist:mac:arm64": "npm --prefix p5-studio-pro run dist:mac:arm64",
     "dist:mac:dir": "npm --prefix p5-studio-pro run dist:mac:dir",
     "dist:win": "npm --prefix p5-studio-pro run dist:win",
     "dist:win:dir": "npm --prefix p5-studio-pro run dist:win:dir",
