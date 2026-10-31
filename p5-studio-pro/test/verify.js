@@ -545,6 +545,40 @@ await asyncTest('14. Verify exported MP4 retains full-length audio stream withou
 });
 
 // ----------------------------------------------------
+// 15. Test Collapsible Panels (Audio DSP Engine & OSC Monitor)
+// ----------------------------------------------------
+test('15. Verify Collapsible Audio DSP Engine and OSC Monitor Panels', () => {
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="panel-audio"'), 'index.html must have panel-audio id');
+  assert.ok(htmlSrc.includes('id="panel-osc"'), 'index.html must have panel-osc id');
+  assert.ok(htmlSrc.includes('id="header-audio-panel"'), 'index.html must have header-audio-panel id');
+  assert.ok(htmlSrc.includes('id="header-osc-panel"'), 'index.html must have header-osc-panel id');
+  assert.ok(htmlSrc.includes('id="body-audio-panel"'), 'index.html must have body-audio-panel id');
+  assert.ok(htmlSrc.includes('id="body-osc-panel"'), 'index.html must have body-osc-panel id');
+  assert.ok(htmlSrc.includes('panel-header-collapsible'), 'index.html must have panel-header-collapsible class');
+  assert.ok(htmlSrc.includes('panel-collapse-icon'), 'index.html must have panel-collapse-icon elements');
+
+  // Verify internal DSP and OSC elements remain intact in the DOM
+  assert.ok(htmlSrc.includes('id="canvas-fft"'), 'index.html must preserve canvas-fft');
+  assert.ok(htmlSrc.includes('id="canvas-waveform"'), 'index.html must preserve canvas-waveform');
+  assert.ok(htmlSrc.includes('id="rms-badge"'), 'index.html must preserve rms-badge');
+  assert.ok(htmlSrc.includes('id="osc-rate-badge"'), 'index.html must preserve osc-rate-badge');
+  assert.ok(htmlSrc.includes('id="osc-log"'), 'index.html must preserve osc-log');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('initCollapsiblePanels'), 'main.js must implement and call initCollapsiblePanels');
+  assert.ok(mainJsSrc.includes('p5_studio_audio_panel_collapsed'), 'main.js must persist p5_studio_audio_panel_collapsed');
+  assert.ok(mainJsSrc.includes('p5_studio_osc_panel_collapsed'), 'main.js must persist p5_studio_osc_panel_collapsed');
+
+  const styleSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/style.css'), 'utf-8');
+  assert.ok(styleSrc.includes('.panel-header-collapsible'), 'style.css must style .panel-header-collapsible');
+  assert.ok(styleSrc.includes('.panel-collapse-icon'), 'style.css must style .panel-collapse-icon');
+  assert.ok(styleSrc.includes('.audio-panel.collapsed .panel-body'), 'style.css must hide audio body when collapsed');
+  assert.ok(styleSrc.includes('.osc-panel.collapsed .panel-body'), 'style.css must hide osc body when collapsed');
+  assert.ok(styleSrc.includes('.preview-panel'), 'style.css must define .preview-panel with flex expansion');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

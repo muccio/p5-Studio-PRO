@@ -678,9 +678,21 @@ body.app-container {
   overflow-y: auto;
 }
 
-.preview-panel, .audio-panel, .osc-panel {
+.preview-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 260px;
   border-bottom: 1px solid var(--border-color);
   padding: 12px;
+  transition: flex 0.2s ease;
+}
+
+.audio-panel, .osc-panel {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-color);
+  padding: 12px;
+  transition: all 0.2s ease;
 }
 
 .preview-header, .panel-header {
@@ -689,6 +701,70 @@ body.app-container {
   justify-content: space-between;
   margin-bottom: 8px;
 }
+
+/* Collapsible Panel Headers */
+.panel-header-collapsible {
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 6px;
+  margin: -4px -6px 8px -6px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.panel-header-collapsible:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-collapse-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s ease;
+}
+
+.panel-collapse-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.panel-header-collapsible:hover .panel-collapse-icon {
+  color: var(--accent-cyan);
+}
+
+/* Collapsed Panel Styles */
+.audio-panel.collapsed .panel-body,
+.osc-panel.collapsed .panel-body {
+  display: none !important;
+}
+
+.audio-panel.collapsed,
+.osc-panel.collapsed {
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  padding-bottom: 8px !important;
+}
+
+.audio-panel.collapsed .panel-header-collapsible,
+.osc-panel.collapsed .panel-header-collapsible {
+  margin-bottom: 0 !important;
+}
+
+.audio-panel.collapsed .panel-collapse-icon,
+.osc-panel.collapsed .panel-collapse-icon {
+  transform: rotate(-90deg);
+}
+
 .panel-title {
   font-size: 11px;
   font-weight: 700;
@@ -718,12 +794,16 @@ body.app-container {
 /* Viewport Sandbox */
 .preview-viewport-container {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  flex: 1;
+  min-height: 220px;
   background-color: #000;
   border: 1px solid var(--border-color);
   border-radius: 4px;
   overflow: hidden;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .preview-frame {
   width: 100%;
@@ -792,14 +872,12 @@ body.app-container {
 }
 
 /* OSC Log */
-.osc-panel {
-  flex: 1;
+.osc-panel .panel-body {
   display: flex;
   flex-direction: column;
-  min-height: 140px;
 }
 .osc-log-container {
-  flex: 1;
+  height: 140px;
   background-color: #080a0d;
   border: 1px solid var(--border-color);
   border-radius: 4px;
@@ -807,7 +885,6 @@ body.app-container {
   font-family: var(--font-mono);
   font-size: 11px;
   overflow-y: auto;
-  max-height: 180px;
 }
 .osc-entry {
   padding: 2px 0;

@@ -91,6 +91,7 @@ class IDEApp {
     this.initP5LibrariesModal();
     this.initP5ReferenceModal();
     this.initAppearanceControls();
+    this.initCollapsiblePanels();
 
     // Restore window opacity from saved preferences
     if (this.currentWindowOpacity !== 1.0) {
@@ -1992,6 +1993,50 @@ class IDEApp {
 
     // Initial sync
     this.syncAppearanceUI();
+  }
+
+  initCollapsiblePanels() {
+    const audioPanel = document.getElementById('panel-audio');
+    const oscPanel = document.getElementById('panel-osc');
+    const audioHeader = document.getElementById('header-audio-panel');
+    const oscHeader = document.getElementById('header-osc-panel');
+
+    const restoreState = (panel, storageKey) => {
+      try {
+        const isCollapsed = localStorage.getItem(storageKey) === 'true';
+        if (isCollapsed && panel) {
+          panel.classList.add('collapsed');
+        }
+      } catch (e) {
+        console.warn('[CollapsiblePanels] Failed to read localStorage', e);
+      }
+    };
+
+    const togglePanel = (panel, storageKey) => {
+      if (!panel) return;
+      const collapsed = panel.classList.toggle('collapsed');
+      try {
+        localStorage.setItem(storageKey, collapsed ? 'true' : 'false');
+      } catch (e) {
+        console.warn('[CollapsiblePanels] Failed to write localStorage', e);
+      }
+    };
+
+    if (audioHeader && audioPanel) {
+      restoreState(audioPanel, 'p5_studio_audio_panel_collapsed');
+      audioHeader.addEventListener('click', (e) => {
+        if (e.target.closest('button') || e.target.closest('select')) return;
+        togglePanel(audioPanel, 'p5_studio_audio_panel_collapsed');
+      });
+    }
+
+    if (oscHeader && oscPanel) {
+      restoreState(oscPanel, 'p5_studio_osc_panel_collapsed');
+      oscHeader.addEventListener('click', (e) => {
+        if (e.target.closest('button') || e.target.closest('select')) return;
+        togglePanel(oscPanel, 'p5_studio_osc_panel_collapsed');
+      });
+    }
   }
 
   // =========================================================================

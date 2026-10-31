@@ -210,61 +210,75 @@
       </div>
 
       <!-- AUDIO-REACTIVE INSPECTOR -->
-      <div class="audio-panel">
-        <div class="panel-header">
-          <span class="panel-title">AUDIO-REACTIVE DSP ENGINE</span>
+      <div class="audio-panel" id="panel-audio">
+        <div class="panel-header panel-header-collapsible" id="header-audio-panel" title="Click to collapse / expand">
+          <div class="panel-header-left">
+            <span class="panel-collapse-icon" id="collapse-icon-audio">
+              <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+            </span>
+            <span class="panel-title">AUDIO-REACTIVE DSP ENGINE</span>
+          </div>
           <span id="rms-badge" class="badge-accent">RMS: 0.00</span>
         </div>
 
-        <!-- FFT & Oscilloscope Canvases -->
-        <div class="visualizer-canvases">
-          <div class="visualizer-box">
-            <span class="vis-label">FFT SPECTRUM (Row 0 u_audioTex)</span>
-            <canvas id="canvas-fft" width="300" height="60"></canvas>
+        <div class="panel-body" id="body-audio-panel">
+          <!-- FFT & Oscilloscope Canvases -->
+          <div class="visualizer-canvases">
+            <div class="visualizer-box">
+              <span class="vis-label">FFT SPECTRUM (Row 0 u_audioTex)</span>
+              <canvas id="canvas-fft" width="300" height="60"></canvas>
+            </div>
+            <div class="visualizer-box">
+              <span class="vis-label">WAVEFORM (Row 1 u_audioTex)</span>
+              <canvas id="canvas-waveform" width="300" height="60"></canvas>
+            </div>
           </div>
-          <div class="visualizer-box">
-            <span class="vis-label">WAVEFORM (Row 1 u_audioTex)</span>
-            <canvas id="canvas-waveform" width="300" height="60"></canvas>
-          </div>
-        </div>
 
-        <!-- Real-time Band Meters -->
-        <div class="band-meters-grid">
-          <div class="band-meter">
-            <div class="meter-bar-track"><div id="meter-sub" class="meter-bar-fill"></div></div>
-            <span class="meter-name">SUB</span>
-          </div>
-          <div class="band-meter">
-            <div class="meter-bar-track"><div id="meter-bass" class="meter-bar-fill"></div></div>
-            <span class="meter-name">BASS</span>
-          </div>
-          <div class="band-meter">
-            <div class="meter-bar-track"><div id="meter-lowmid" class="meter-bar-fill"></div></div>
-            <span class="meter-name">L-MID</span>
-          </div>
-          <div class="band-meter">
-            <div class="meter-bar-track"><div id="meter-mid" class="meter-bar-fill"></div></div>
-            <span class="meter-name">MID</span>
-          </div>
-          <div class="band-meter">
-            <div class="meter-bar-track"><div id="meter-highmid" class="meter-bar-fill"></div></div>
-            <span class="meter-name">H-MID</span>
-          </div>
-          <div class="band-meter">
-            <div class="meter-bar-track"><div id="meter-treble" class="meter-bar-fill"></div></div>
-            <span class="meter-name">TREB</span>
+          <!-- Real-time Band Meters -->
+          <div class="band-meters-grid">
+            <div class="band-meter">
+              <div class="meter-bar-track"><div id="meter-sub" class="meter-bar-fill"></div></div>
+              <span class="meter-name">SUB</span>
+            </div>
+            <div class="band-meter">
+              <div class="meter-bar-track"><div id="meter-bass" class="meter-bar-fill"></div></div>
+              <span class="meter-name">BASS</span>
+            </div>
+            <div class="band-meter">
+              <div class="meter-bar-track"><div id="meter-lowmid" class="meter-bar-fill"></div></div>
+              <span class="meter-name">L-MID</span>
+            </div>
+            <div class="band-meter">
+              <div class="meter-bar-track"><div id="meter-mid" class="meter-bar-fill"></div></div>
+              <span class="meter-name">MID</span>
+            </div>
+            <div class="band-meter">
+              <div class="meter-bar-track"><div id="meter-highmid" class="meter-bar-fill"></div></div>
+              <span class="meter-name">H-MID</span>
+            </div>
+            <div class="band-meter">
+              <div class="meter-bar-track"><div id="meter-treble" class="meter-bar-fill"></div></div>
+              <span class="meter-name">TREB</span>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- OSC MONITOR & UNIFORM INSPECTOR -->
-      <div class="osc-panel">
-        <div class="panel-header">
-          <span class="panel-title">OSC MONITOR & UNIFORMS</span>
+      <div class="osc-panel" id="panel-osc">
+        <div class="panel-header panel-header-collapsible" id="header-osc-panel" title="Click to collapse / expand">
+          <div class="panel-header-left">
+            <span class="panel-collapse-icon" id="collapse-icon-osc">
+              <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+            </span>
+            <span class="panel-title">OSC MONITOR & UNIFORMS</span>
+          </div>
           <span id="osc-rate-badge" class="badge">UDP 9000</span>
         </div>
-        <div id="osc-log" class="osc-log-container">
-          <div class="osc-entry log-dim">Waiting for incoming OSC packets on port 9000...</div>
+        <div class="panel-body" id="body-osc-panel">
+          <div id="osc-log" class="osc-log-container">
+            <div class="osc-entry log-dim">Waiting for incoming OSC packets on port 9000...</div>
+          </div>
         </div>
       </div>
 
