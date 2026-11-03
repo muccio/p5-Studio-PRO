@@ -601,6 +601,91 @@ test('16. Verify Clean Project Switching, File Tree Rebuilding and State Persist
 });
 
 // ----------------------------------------------------
+// 17. Test New Project, Audio Input Gain / Device Selector & Complete p5 Releases
+// ----------------------------------------------------
+test('17. Verify New Project Boilerplate, Audio Input Gain Engine, and Latest p5.js 2.x/1.x Releases', () => {
+  // 17.1 New Project IPC and Preload
+  const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainIndexSrc.includes("'project:newProject'"), 'main/index.js must implement ipcMain.handle project:newProject');
+
+  const preloadCjs = fs.readFileSync(path.join(projectRoot, 'src/preload/idePreload.cjs'), 'utf-8');
+  assert.ok(preloadCjs.includes('newProject:'), 'idePreload.cjs must expose project.newProject');
+
+  const preloadJs = fs.readFileSync(path.join(projectRoot, 'src/preload/idePreload.js'), 'utf-8');
+  assert.ok(preloadJs.includes('newProject:'), 'idePreload.js must expose project.newProject');
+
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="btn-new-project"'), 'index.html must include btn-new-project button');
+
+  // 17.2 Audio Input Gain & CoreAudio Hardware Compatibility
+  const sandboxRuntime = fs.readFileSync(path.join(projectRoot, 'src/main/sandboxRuntime.js'), 'utf-8');
+  assert.ok(sandboxRuntime.includes('setGain('), 'sandboxRuntime.js must implement setGain method');
+  assert.ok(sandboxRuntime.includes('setDevice('), 'sandboxRuntime.js must implement setDevice method');
+  assert.ok(sandboxRuntime.includes("'audio:setGain'"), 'sandboxRuntime.js must listen for audio:setGain');
+  assert.ok(sandboxRuntime.includes("'audio:setDevice'"), 'sandboxRuntime.js must listen for audio:setDevice');
+  assert.ok(!sandboxRuntime.includes('sampleRate: 48000'), 'sandboxRuntime.js must not force rigid sampleRate 48000 to avoid iMac CoreAudio OverconstrainedError');
+
+  const sandboxPreload = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(sandboxPreload.includes('setGain('), 'sandboxPreload.cjs must implement setGain method');
+  assert.ok(sandboxPreload.includes('setDevice('), 'sandboxPreload.cjs must implement setDevice method');
+
+  assert.ok(htmlSrc.includes('id="slider-audio-gain"'), 'index.html must include topbar slider-audio-gain');
+  assert.ok(htmlSrc.includes('id="panel-slider-audio-gain"'), 'index.html must include panel-slider-audio-gain');
+  assert.ok(htmlSrc.includes('id="input-vu-fill"'), 'index.html must include input-vu-fill meter');
+  assert.ok(htmlSrc.includes('class="btn-gain-preset"'), 'index.html must include gain preset buttons');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('initAudioGainControls'), 'main.js must implement initAudioGainControls');
+  assert.ok(mainJsSrc.includes('sendAudioGainToPreview'), 'main.js must implement sendAudioGainToPreview');
+  assert.ok(mainJsSrc.includes('sendAudioDeviceToPreview'), 'main.js must implement sendAudioDeviceToPreview');
+  assert.ok(mainJsSrc.includes('p5_studio_audio_gain'), 'main.js must persist p5_studio_audio_gain in localStorage');
+  assert.ok(mainJsSrc.includes('p5_studio_audio_device'), 'main.js must persist p5_studio_audio_device in localStorage');
+  assert.ok(mainJsSrc.includes("key === 'n' || e.key === 'N'"), 'main.js must support Cmd+Shift+N / Ctrl+Shift+N for new project');
+
+  // 17.3 Complete p5.js Version Support (2.3.4 down to 2.0.0 and 1.11.13)
+  assert.ok(htmlSrc.includes('value="2.3.4"'), 'index.html must include 2.3.4 (Latest)');
+  assert.ok(htmlSrc.includes('value="2.3.2"'), 'index.html must include 2.3.2');
+  assert.ok(htmlSrc.includes('value="2.2.0"'), 'index.html must include 2.2.0');
+  assert.ok(htmlSrc.includes('value="2.0.0"'), 'index.html must include 2.0.0');
+  assert.ok(htmlSrc.includes('value="1.11.13"'), 'index.html must include 1.11.13 (Not Maintained)');
+  assert.ok(htmlSrc.includes('value="1.11.12"'), 'index.html must include 1.11.12');
+
+  const projectManagerSrc = fs.readFileSync(path.join(projectRoot, 'src/main/projectManager.js'), 'utf-8');
+  assert.ok(projectManagerSrc.includes("version.startsWith('2.')"), 'projectManager.js must resolve p5 2.x versions from unpkg CDN');
+});
+
+// ----------------------------------------------------
+// 18. Test macOS Microphone Hardware Entitlements & Continuous DSP Loop
+// ----------------------------------------------------
+test('18. Verify macOS Microphone TCC Description, Continuous DSP Loop and Live VU Meters', () => {
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'));
+  assert.ok(pkgJson.build.mac.extendInfo.NSMicrophoneUsageDescription, 'package.json must declare NSMicrophoneUsageDescription for macOS TCC');
+
+  const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainIndexSrc.includes('setPermissionRequestHandler'), 'main/index.js must configure setPermissionRequestHandler for media');
+  assert.ok(mainIndexSrc.includes('system:requestMicrophoneAccess'), 'main/index.js must implement system:requestMicrophoneAccess');
+
+  const sandboxRuntime = fs.readFileSync(path.join(projectRoot, 'src/main/sandboxRuntime.js'), 'utf-8');
+  assert.ok(sandboxRuntime.includes('_startLiveLoop('), 'sandboxRuntime.js must implement _startLiveLoop');
+  assert.ok(sandboxRuntime.includes('this.silentGain'), 'sandboxRuntime.js must connect analyser to silent destination gain to pump CoreAudio buffers');
+
+  const sandboxPreload = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(sandboxPreload.includes('_startLiveLoop('), 'sandboxPreload.cjs must implement _startLiveLoop');
+  assert.ok(sandboxPreload.includes('this.silentGain'), 'sandboxPreload.cjs must connect analyser to silent destination gain');
+
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="header-vu-fill"'), 'index.html must have header-vu-fill');
+  assert.ok(htmlSrc.includes('id="header-vu-db"'), 'index.html must have header-vu-db');
+  assert.ok(htmlSrc.includes('id="panel-vu-db"'), 'index.html must have panel-vu-db');
+  assert.ok(htmlSrc.includes('id="btn-reconnect-audio"'), 'index.html must have btn-reconnect-audio');
+
+  const styleSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/style.css'), 'utf-8');
+  assert.ok(styleSrc.includes('.header-vu-track'), 'style.css must style .header-vu-track');
+  assert.ok(styleSrc.includes('.header-vu-fill'), 'style.css must style .header-vu-fill');
+  assert.ok(styleSrc.includes('.btn-mic-reconnect'), 'style.css must style .btn-mic-reconnect');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

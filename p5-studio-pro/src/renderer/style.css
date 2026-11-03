@@ -237,7 +237,13 @@ body.app-container {
   fill: currentColor;
 }
 
-/* Audio Device Dropdown */
+/* Audio Device Dropdown & Gain Cluster */
+.audio-input-cluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .device-selector-wrapper {
   display: flex;
   align-items: center;
@@ -246,6 +252,224 @@ body.app-container {
   border: 1px solid var(--border-color);
   padding: 4px 8px;
   border-radius: 4px;
+}
+
+.audio-gain-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.gain-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  letter-spacing: 0.5px;
+}
+
+.slider-gain {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 70px;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.slider-gain::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 6px rgba(0, 240, 255, 0.6);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.slider-gain::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.badge-gain {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent-cyan);
+  min-width: 28px;
+  text-align: right;
+  font-weight: 600;
+}
+
+/* Header Live VU Meter */
+.audio-vu-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.vu-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.header-vu-track {
+  width: 50px;
+  height: 8px;
+  background: #080a0d;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.header-vu-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(to right, var(--accent-green) 0%, var(--accent-green) 60%, var(--accent-amber) 82%, var(--accent-record) 100%);
+  transition: width 0.04s linear;
+}
+
+.header-vu-peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0%;
+  width: 2px;
+  background: #ffffff;
+  pointer-events: none;
+  opacity: 0.9;
+  transition: left 0.08s ease-out;
+}
+
+.header-vu-db, .badge-db {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+.header-vu-db.vu-clip, .badge-db.vu-clip {
+  color: var(--accent-record);
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 42, 75, 0.8);
+}
+
+/* Audio Panel Specific Input Controls */
+.audio-input-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: rgba(13, 15, 18, 0.7);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.gain-control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.ctrl-sublabel {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.slider-panel {
+  width: 90px;
+}
+
+.gain-presets {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+}
+
+.btn-gain-preset {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-gain-preset:hover {
+  background: var(--bg-active);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.input-meter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.input-vu-track {
+  width: 70px;
+  height: 8px;
+  background: #080a0d;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.input-vu-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(to right, var(--accent-green) 60%, var(--accent-amber) 85%, var(--accent-record) 100%);
+  transition: width 0.04s linear;
+}
+
+.input-vu-peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0%;
+  width: 2px;
+  background: #ffffff;
+  pointer-events: none;
+  opacity: 0.9;
+  transition: left 0.08s ease-out;
+}
+
+.btn-mic-reconnect {
+  color: var(--accent-cyan);
+  font-weight: 600;
+  padding: 2px 6px;
+}
+
+.btn-mic-reconnect:hover {
+  background: rgba(0, 240, 255, 0.15);
+  border-color: var(--accent-cyan);
 }
 
 /* Live Stage Cluster */

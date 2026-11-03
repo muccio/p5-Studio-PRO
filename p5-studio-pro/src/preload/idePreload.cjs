@@ -5,9 +5,10 @@ const { contextBridge, ipcRenderer } = require('electron');
  * Exposes a secure, typed IPC bridge to the renderer
  */
 contextBridge.exposeInMainWorld('electronAPI', {
-  // --- System External Browser ---
+  // --- System External Browser & Hardware Permissions ---
   system: {
-    openExternal: (url) => ipcRenderer.invoke('system:openExternal', url)
+    openExternal: (url) => ipcRenderer.invoke('system:openExternal', url),
+    requestMicrophoneAccess: () => ipcRenderer.invoke('system:requestMicrophoneAccess')
   },
 
   // --- Window Controls ---
@@ -23,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   project: {
     getInfo: () => ipcRenderer.invoke('project:getInfo'),
     openFolder: (explicitPath) => ipcRenderer.invoke('project:openFolder', explicitPath),
+    newProject: (projectName) => ipcRenderer.invoke('project:newProject', projectName),
     listFiles: () => ipcRenderer.invoke('project:listFiles'),
     readFile: (relativePath) => ipcRenderer.invoke('project:readFile', relativePath),
     writeFile: (relativePath, content) => ipcRenderer.invoke('project:writeFile', { relativePath, content }),

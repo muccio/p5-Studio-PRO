@@ -1021,32 +1021,148 @@ class IdeAudioEngine {
 
     // WebGL Audio Texture cache (p5.Image)
     this.p5AudioTexture = null;
+
+    // Audio Input Gain & Device state
+    this.inputGain = 1.0;
+    this.currentDeviceId = 'default';
+    this.gainNode = null;
+    this.sourceNode = null;
+    this.silentGain = null;
+    this._loopRunning = false;
   }
 
-  async initLive() {
-    if (this.audioCtx) return;
+  async initLive(preferredDeviceId = null) {
+    if (preferredDeviceId) {
+      this.currentDeviceId = preferredDeviceId;
+    }
     try {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      this.audioCtx = new AudioContextClass({ sampleRate: 48000 });
+      if (!this.audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        this.audioCtx = new AudioContextClass();
+      }
+      if (this.audioCtx && this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume().catch(() => {});
+      }
+      this.sampleRate = this.audioCtx.sampleRate || 44100;
 
-      this.liveStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 48000
+      // Cleanup existing stream & source node
+      if (this.liveStream) {
+        try { this.liveStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+        this.liveStream = null;
+      }
+      if (this.sourceNode) {
+        try { this.sourceNode.disconnect(); } catch (e) {}
+        this.sourceNode = null;
+      }
+
+      let stream = null;
+      const requestedDevice = this.currentDeviceId;
+
+      // 1. First attempt: specific device if selected
+      if (requestedDevice && requestedDevice !== 'default') {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: { ideal: requestedDevice },
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          });
+        } catch (e1) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: { deviceId: { ideal: requestedDevice } }
+            });
+          } catch (e2) {}
         }
-      });
+      }
 
-      const source = this.audioCtx.createMediaStreamSource(this.liveStream);
-      this.analyser = this.audioCtx.createAnalyser();
-      this.analyser.fftSize = this.fftSize;
-      this.analyser.smoothingTimeConstant = this.smoothingTimeConstant;
-      source.connect(this.analyser);
-      console.log('[ideAudio] Live audio initialized');
+      // 2. Second attempt: system default with low-latency DSP flags
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          });
+        } catch (e3) {}
+      }
+
+      // 3. Third attempt: standard permissive audio constraint
+      if (!stream) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+
+      this.liveStream = stream;
+      this.sourceNode = this.audioCtx.createMediaStreamSource(this.liveStream);
+
+      if (!this.gainNode) {
+        this.gainNode = this.audioCtx.createGain();
+      }
+      this.gainNode.gain.value = this.inputGain;
+
+      if (!this.analyser) {
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = this.fftSize;
+        this.analyser.smoothingTimeConstant = this.smoothingTimeConstant;
+      }
+
+      this.sourceNode.connect(this.gainNode);
+      this.gainNode.connect(this.analyser);
+
+      // Connect analyser to a zero-gain destination node to force Chromium CoreAudio render pump
+      if (!this.silentGain) {
+        this.silentGain = this.audioCtx.createGain();
+        this.silentGain.gain.value = 0.0;
+        this.analyser.connect(this.silentGain);
+        this.silentGain.connect(this.audioCtx.destination);
+      }
+
+      // Start continuous live analysis & postMessage loop
+      this._startLiveLoop();
+
+      const trackLabel = this.liveStream.getAudioTracks().map(t => t.label).join(', ') || 'Microphone Active';
+      console.log('[ideAudio] Live audio active. Track:', trackLabel);
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'audio:connected', track: trackLabel, deviceId: this.currentDeviceId }, '*');
+      }
     } catch (err) {
       console.warn('[ideAudio] Audio input not accessible, using synthetic audio fallback:', err.message);
+      this._startLiveLoop();
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'audio:error', message: err.message }, '*');
+      }
     }
+  }
+
+  _startLiveLoop() {
+    if (this._loopRunning || isExportMode) return;
+    this._loopRunning = true;
+    let frameCount = 0;
+    const tick = () => {
+      if (!this._loopRunning) return;
+      frameCount++;
+      this.update(frameCount, 60);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  setGain(multiplier) {
+    if (typeof multiplier === 'number' && !isNaN(multiplier)) {
+      this.inputGain = Math.max(0, multiplier);
+      if (this.gainNode && this.audioCtx) {
+        this.gainNode.gain.setTargetAtTime(this.inputGain, this.audioCtx.currentTime, 0.02);
+      }
+    }
+  }
+
+  async setDevice(deviceId) {
+    this.currentDeviceId = deviceId || 'default';
+    await this.initLive(this.currentDeviceId);
   }
 
   loadOfflineWav(arrayBuffer) {
@@ -1122,6 +1238,16 @@ class IdeAudioEngine {
       }
     }
     this._updateLive();
+
+    if (!isExportMode && window.parent && window.parent !== window && (typeof virtualFrame === 'number' ? virtualFrame % 2 === 0 : true)) {
+      window.parent.postMessage({
+        type: 'audio:update',
+        rms: this.currentRMS,
+        bands: this.bands,
+        fft: Array.from(this.liveFreqData.subarray(0, 128)),
+        wave: Array.from(this.liveTimeData.subarray(0, 128))
+      }, '*');
+    }
   }
 
   _updateLive() {
@@ -1316,9 +1442,32 @@ class IdeOscEngine {
 
     // Also support window postMessage from parent IDE
     window.addEventListener('message', (event) => {
-      if (event.data && event.data.type === 'osc:message') {
-        this._dispatch(event.data.address, event.data.args);
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'osc:message') {
+        this._dispatch(data.address, data.args);
+      } else if (data.type === 'audio:setGain' && typeof data.gain === 'number') {
+        if (window.ideAudio) window.ideAudio.setGain(data.gain);
+      } else if (data.type === 'audio:setDevice' && typeof data.deviceId === 'string') {
+        if (window.ideAudio) window.ideAudio.setDevice(data.deviceId);
+      } else if (data.type === 'audio:resume') {
+        if (window.ideAudio && window.ideAudio.audioCtx && window.ideAudio.audioCtx.state === 'suspended') {
+          window.ideAudio.audioCtx.resume().catch(() => {});
+        }
+      } else if (data.type === 'audio:reconnect') {
+        if (window.ideAudio) {
+          window.ideAudio.initLive(window.ideAudio.currentDeviceId);
+        }
       }
+    });
+
+    const resumeLiveAudio = () => {
+      if (window.ideAudio && window.ideAudio.audioCtx && window.ideAudio.audioCtx.state === 'suspended') {
+        window.ideAudio.audioCtx.resume().catch(() => {});
+      }
+    };
+    ['click', 'keydown', 'mousedown', 'touchstart'].forEach(eType => {
+      window.addEventListener(eType, resumeLiveAudio, { passive: true });
     });
   }
 

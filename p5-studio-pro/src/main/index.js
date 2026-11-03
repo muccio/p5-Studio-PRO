@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen, shell, session, systemPreferences } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -596,6 +596,66 @@ function setupIPC() {
     return null;
   });
 
+  ipcMain.handle('project:newProject', async (event, customName) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Seleziona cartella di destinazione per il nuovo progetto p5.js',
+      properties: ['openDirectory', 'createDirectory'],
+      buttonLabel: 'Crea Progetto Qui'
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    let targetDir = result.filePaths[0];
+
+    // If customName provided or target directory has existing files, create subfolder
+    if (customName && typeof customName === 'string' && customName.trim().length > 0) {
+      targetDir = path.join(targetDir, customName.trim());
+    } else {
+      try {
+        const existingEntries = fs.readdirSync(targetDir);
+        const nonHidden = existingEntries.filter(f => !f.startsWith('.'));
+        if (nonHidden.length > 0) {
+          const timestamp = new Date().toISOString().slice(0, 10);
+          let subName = `p5-sketch-${timestamp}`;
+          let counter = 1;
+          while (fs.existsSync(path.join(targetDir, subName))) {
+            subName = `p5-sketch-${timestamp}-${counter++}`;
+          }
+          targetDir = path.join(targetDir, subName);
+        }
+      } catch (e) {}
+    }
+
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    // Copy boilerplate files from default sketch template
+    const templateDir = resolveDefaultSketchPath();
+    const copyRecursive = (src, dest) => {
+      const entries = fs.readdirSync(src, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.live_buffer' || entry.name === '.takes') {
+          continue;
+        }
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+          fs.mkdirSync(destPath, { recursive: true });
+          copyRecursive(srcPath, destPath);
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
+      }
+    };
+
+    copyRecursive(templateDir, targetDir);
+    console.log(`[Main] Created new p5.js boilerplate project at: ${targetDir}`);
+
+    // Switch workspace to the new project immediately
+    return await switchActiveProject(targetDir);
+  });
+
   ipcMain.handle('project:listFiles', () => {
     return projectManager.listFiles();
   });
@@ -651,6 +711,21 @@ function setupIPC() {
       return true;
     }
     return false;
+  });
+
+  // --- System Microphone Permission IPC ---
+  ipcMain.handle('system:requestMicrophoneAccess', async () => {
+    if (process.platform === 'darwin') {
+      try {
+        const status = systemPreferences.getMediaAccessStatus('microphone');
+        if (status === 'granted') return true;
+        return await systemPreferences.askForMediaAccess('microphone');
+      } catch (e) {
+        console.warn('[macOS] Microphone permission request error:', e);
+        return false;
+      }
+    }
+    return true;
   });
 
   // --- OSC Bridge ---
@@ -992,6 +1067,39 @@ async function startDeterministicExport(options) {
 // App Lifecycle
 // =========================================================================
 app.whenReady().then(async () => {
+  // Setup Electron session permissions for live audio/microphone capture
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'microphone') {
+      callback(true);
+    } else {
+      callback(true);
+    }
+  });
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === 'media' || permission === 'microphone') {
+      return true;
+    }
+    return true;
+  });
+
+  // Check and request macOS system microphone permission
+  if (process.platform === 'darwin') {
+    try {
+      const micStatus = systemPreferences.getMediaAccessStatus('microphone');
+      console.log('[macOS] Microphone access status at launch:', micStatus);
+      if (micStatus !== 'granted') {
+        systemPreferences.askForMediaAccess('microphone').then((granted) => {
+          console.log('[macOS] askForMediaAccess result:', granted);
+        }).catch(err => {
+          console.warn('[macOS] askForMediaAccess error:', err);
+        });
+      }
+    } catch (e) {
+      console.warn('[macOS] systemPreferences check failed:', e);
+    }
+  }
+
   // Determine initial project path:
   // 1. Pending file/folder path from macOS open-file event
   // 2. Command-line argument

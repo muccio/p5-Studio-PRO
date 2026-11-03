@@ -1,6 +1,6 @@
 {
   "name": "p5-studio-pro",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Production-ready cross-platform desktop IDE for p5.js and GLSL Shaders with Dual Audio Engine and OSC Bridge",
   "main": "src/main/index.js",
   "type": "module",
@@ -37,6 +37,9 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "p5-Studio-PRO richiede l'accesso al microfono per l'analisi DSP audio-reattiva in tempo reale e gli shader."
+      },
       "target": [
         {
           "target": "dir",

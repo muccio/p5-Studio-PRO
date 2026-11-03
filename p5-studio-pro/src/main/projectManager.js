@@ -652,9 +652,9 @@ export class ProjectManager extends EventEmitter {
     if (fs.existsSync(indexPath)) {
       try {
         const html = fs.readFileSync(indexPath, 'utf-8');
-        const matchCdn = html.match(/p5\.js\/([0-9\.\-beta]+)\/p5(?:\.min)?\.js/i);
+        const matchCdn = html.match(/p5\.js\/([0-9a-zA-Z\.\-]+)\/p5(?:\.min)?\.js/i);
         if (matchCdn) return matchCdn[1];
-        const matchUnpkg = html.match(/p5@([0-9\.\-beta]+)\/lib\/p5(?:\.min)?\.js/i);
+        const matchUnpkg = html.match(/p5@([0-9a-zA-Z\.\-]+)\/lib\/p5(?:\.min)?\.js/i);
         if (matchUnpkg) return matchUnpkg[1];
         if (html.includes('p5.min.js')) return 'local';
       } catch (e) {}
@@ -688,7 +688,7 @@ export class ProjectManager extends EventEmitter {
       let scriptTag = '';
       if (version === 'local') {
         scriptTag = '<script src="./p5.min.js"></script>';
-      } else if (version.startsWith('2.0')) {
+      } else if (version.startsWith('2.')) {
         scriptTag = `<script src="https://unpkg.com/p5@${version}/lib/p5.min.js" crossorigin="anonymous"></script>`;
       } else {
         scriptTag = `<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/${version}/p5.min.js" crossorigin="anonymous"></script>`;

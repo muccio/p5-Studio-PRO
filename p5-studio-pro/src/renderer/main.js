@@ -71,6 +71,13 @@ class IDEApp {
     this.hasShaderErrors = false;
     this.hasJsErrors = false;
 
+    // Audio Input & Gain state
+    const savedGain = parseFloat(localStorage.getItem('p5_studio_audio_gain') || '1.0');
+    this.currentAudioGain = (!isNaN(savedGain) && savedGain >= 0.1 && savedGain <= 10.0) ? savedGain : 1.0;
+    this.currentAudioDeviceId = localStorage.getItem('p5_studio_audio_device') || 'default';
+    this.inputPeakHold = 0;
+    this.inputPeakHoldTime = 0;
+
     // Editor typography & window appearance state
     const savedFontSize = parseInt(localStorage.getItem('p5_studio_font_size') || '13', 10);
     this.currentFontSize = (!isNaN(savedFontSize) && savedFontSize >= 10 && savedFontSize <= 36) ? savedFontSize : 13;
@@ -85,7 +92,13 @@ class IDEApp {
     setupWebAndScriptSupport(this.editor);
     this.initEventListeners();
     this.initAudioMeters();
+    this.initAudioGainControls();
     this.initLiveWindowControls();
+
+    // Check & request macOS system microphone permission early
+    if (window.electronAPI && window.electronAPI.system && window.electronAPI.system.requestMicrophoneAccess) {
+      window.electronAPI.system.requestMicrophoneAccess().catch(() => {});
+    }
     this.initPreviewPopoutControls();
     this.initP5VersionControls();
     this.initP5LibrariesModal();
@@ -718,6 +731,13 @@ class IDEApp {
         this.latestAudioMetrics = data;
       }
     });
+
+    frame.addEventListener('load', () => {
+      this.sendAudioGainToPreview(this.currentAudioGain);
+      if (this.currentAudioDeviceId && this.currentAudioDeviceId !== 'default') {
+        this.sendAudioDeviceToPreview(this.currentAudioDeviceId);
+      }
+    });
   }
 
   restartPreview() {
@@ -853,25 +873,174 @@ class IDEApp {
       document.getElementById('meter-highmid').style.height = `${Math.min(100, bands.highMid * 100)}%`;
       document.getElementById('meter-treble').style.height = `${Math.min(100, bands.treble * 100)}%`;
       document.getElementById('rms-badge').textContent = `RMS: ${rms.toFixed(2)}`;
+
+      // Input level metering with smooth peak hold & dB conversion
+      const now = performance.now();
+      if (!this.inputPeakHold || rms > this.inputPeakHold) {
+        this.inputPeakHold = rms;
+        this.inputPeakHoldTime = now;
+      } else if (now - this.inputPeakHoldTime > 800) {
+        this.inputPeakHold = Math.max(rms, this.inputPeakHold * 0.94);
+      }
+
+      const db = rms > 0.0005 ? Math.min(0, Math.max(-60, 20 * Math.log10(rms * 1.5))) : -60;
+      const dbText = db <= -55 ? '-inf' : `${Math.round(db)} dB`;
+      const levelPercent = Math.min(100, Math.max(0, ((db + 60) / 60) * 100));
+      const peakDb = Math.min(0, Math.max(-60, 20 * Math.log10(Math.max(0.0005, this.inputPeakHold * 1.5))));
+      const peakPercent = Math.min(100, Math.max(0, ((peakDb + 60) / 60) * 100));
+
+      const headerVuFill = document.getElementById('header-vu-fill');
+      const headerVuPeak = document.getElementById('header-vu-peak');
+      const headerVuDb = document.getElementById('header-vu-db');
+      if (headerVuFill) headerVuFill.style.width = `${levelPercent}%`;
+      if (headerVuPeak) headerVuPeak.style.left = `${peakPercent}%`;
+      if (headerVuDb) {
+        headerVuDb.textContent = dbText;
+        if (db >= -1) headerVuDb.classList.add('vu-clip');
+        else headerVuDb.classList.remove('vu-clip');
+      }
+
+      const inputVuFill = document.getElementById('input-vu-fill');
+      const inputVuPeak = document.getElementById('input-vu-peak');
+      const panelVuDb = document.getElementById('panel-vu-db');
+      if (inputVuFill) inputVuFill.style.width = `${levelPercent}%`;
+      if (inputVuPeak) inputVuPeak.style.left = `${peakPercent}%`;
+      if (panelVuDb) {
+        panelVuDb.textContent = dbText;
+        if (db >= -1) panelVuDb.classList.add('vu-clip');
+        else panelVuDb.classList.remove('vu-clip');
+      }
     };
 
     draw();
   }
 
+  initAudioGainControls() {
+    const topSlider = document.getElementById('slider-audio-gain');
+    const topBadge = document.getElementById('badge-audio-gain');
+    const panelSlider = document.getElementById('panel-slider-audio-gain');
+    const panelBadge = document.getElementById('panel-badge-audio-gain');
+    const presetButtons = document.querySelectorAll('.btn-gain-preset');
+
+    const updateGain = (val, shouldPersist = true) => {
+      const num = parseFloat(val);
+      if (isNaN(num)) return;
+      this.currentAudioGain = num;
+      const formatted = `${num.toFixed(1)}x`;
+
+      if (topSlider && topSlider.value !== num.toString()) topSlider.value = num;
+      if (topBadge) topBadge.textContent = formatted;
+      if (panelSlider && panelSlider.value !== num.toString()) panelSlider.value = num;
+      if (panelBadge) panelBadge.textContent = formatted;
+
+      if (shouldPersist) {
+        localStorage.setItem('p5_studio_audio_gain', num.toString());
+      }
+
+      this.sendAudioGainToPreview(num);
+    };
+
+    // Initialize UI to currentAudioGain
+    updateGain(this.currentAudioGain, false);
+
+    if (topSlider) {
+      topSlider.addEventListener('input', (e) => updateGain(e.target.value));
+    }
+    if (panelSlider) {
+      panelSlider.addEventListener('input', (e) => updateGain(e.target.value));
+    }
+
+    presetButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const gainVal = btn.dataset.gain;
+        if (gainVal) updateGain(gainVal);
+      });
+    });
+
+    const btnReconnect = document.getElementById('btn-reconnect-audio');
+    if (btnReconnect) {
+      btnReconnect.addEventListener('click', async () => {
+        if (window.electronAPI && window.electronAPI.system && window.electronAPI.system.requestMicrophoneAccess) {
+          await window.electronAPI.system.requestMicrophoneAccess();
+        }
+        await this.populateAudioDevices();
+        const frame = document.getElementById('preview-frame');
+        if (frame && frame.contentWindow) {
+          frame.contentWindow.postMessage({ type: 'audio:reconnect' }, '*');
+        }
+      });
+    }
+
+    // Forward click/interaction to ensure iframe AudioContext is resumed
+    window.addEventListener('click', () => {
+      const frame = document.getElementById('preview-frame');
+      if (frame && frame.contentWindow) {
+        frame.contentWindow.postMessage({ type: 'audio:resume' }, '*');
+      }
+    }, { passive: true });
+  }
+
+  sendAudioGainToPreview(gain) {
+    const frame = document.getElementById('preview-frame');
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: 'audio:setGain', gain }, '*');
+      try {
+        if (frame.contentWindow.ideAudio && typeof frame.contentWindow.ideAudio.setGain === 'function') {
+          frame.contentWindow.ideAudio.setGain(gain);
+        }
+      } catch (e) {}
+    }
+  }
+
+  sendAudioDeviceToPreview(deviceId) {
+    const frame = document.getElementById('preview-frame');
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: 'audio:setDevice', deviceId }, '*');
+      try {
+        if (frame.contentWindow.ideAudio && typeof frame.contentWindow.ideAudio.setDevice === 'function') {
+          frame.contentWindow.ideAudio.setDevice(deviceId);
+        }
+      } catch (e) {}
+    }
+  }
+
   async populateAudioDevices() {
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
       const select = document.getElementById('audio-device-select');
+      if (!select) return;
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
       select.innerHTML = '';
 
-      const audioInputs = devices.filter(d => d.kind === 'audioinput');
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = 'default';
+      defaultOpt.textContent = 'Default Audio Input';
+      select.appendChild(defaultOpt);
+
+      const audioInputs = devices.filter(d => d.kind === 'audioinput' && d.deviceId !== 'default');
       for (const dev of audioInputs) {
         const option = document.createElement('option');
         option.value = dev.deviceId;
-        option.textContent = dev.label || `Audio Input ${select.children.length + 1}`;
+        option.textContent = dev.label || `Audio Input ${select.children.length}`;
         select.appendChild(option);
       }
-    } catch (e) {}
+
+      if (this.currentAudioDeviceId) {
+        select.value = this.currentAudioDeviceId;
+      }
+
+      // Add change listener if not already attached
+      if (!select.dataset.listenerAttached) {
+        select.dataset.listenerAttached = 'true';
+        select.addEventListener('change', () => {
+          this.currentAudioDeviceId = select.value;
+          localStorage.setItem('p5_studio_audio_device', select.value);
+          this.sendAudioDeviceToPreview(select.value);
+        });
+      }
+    } catch (e) {
+      console.warn('[Audio] Failed to enumerate audio devices:', e);
+    }
   }
 
   // =========================================================================
@@ -1319,6 +1488,12 @@ class IDEApp {
     try {
       const activeVersion = await window.electronAPI.project.getP5Version();
       if (activeVersion) {
+        if (![...select.options].some(opt => opt.value === activeVersion)) {
+          const customOpt = document.createElement('option');
+          customOpt.value = activeVersion;
+          customOpt.textContent = `${activeVersion} (Custom)`;
+          select.prepend(customOpt);
+        }
         select.value = activeVersion;
       }
     } catch (e) {
@@ -2098,17 +2273,33 @@ class IDEApp {
   // 12. Event Listeners Wiring
   // =========================================================================
   initEventListeners() {
-    // Global hotkeys: Cmd+Enter / Ctrl+Enter (Push Live Stage), Cmd+O / Ctrl+O (Open Project)
+    // Global hotkeys: Cmd+Enter / Ctrl+Enter (Push Live Stage), Cmd+O / Ctrl+O (Open Project), Cmd+Shift+N (New Project)
     window.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
         this.pushToLiveStage();
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
+        e.preventDefault();
+        const btnNew = document.getElementById('btn-new-project');
+        if (btnNew) btnNew.click();
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'o' || e.key === 'O')) {
         e.preventDefault();
         const btnOpen = document.getElementById('btn-open-project');
         if (btnOpen) btnOpen.click();
       }
     });
+
+    const btnNewProject = document.getElementById('btn-new-project');
+    if (btnNewProject) {
+      btnNewProject.addEventListener('click', async () => {
+        if (window.electronAPI && window.electronAPI.project && window.electronAPI.project.newProject) {
+          const res = await window.electronAPI.project.newProject();
+          if (res) {
+            await this.switchProject(res);
+          }
+        }
+      });
+    }
 
     document.getElementById('btn-open-project').addEventListener('click', async () => {
       const res = await window.electronAPI.project.openFolder();

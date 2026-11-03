@@ -17,6 +17,10 @@
           <span class="brand-badge">PRO</span>
           <span class="brand-title">p5-Studio</span>
         </div>
+        <button id="btn-new-project" class="btn btn-secondary" title="Nuovo Progetto p5.js Boilerplate (Cmd/Ctrl + Shift + N)">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          <span>Nuovo</span>
+        </button>
         <button id="btn-open-project" class="btn btn-secondary" title="Open Project Folder">
           <svg class="icon" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
           <span id="label-project-name">default-sketch</span>
@@ -43,12 +47,28 @@
       </div>
 
       <div class="header-group header-group-right">
-        <!-- Live Audio Selector -->
-        <div class="device-selector-wrapper" title="Select Audio Input Device">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
-          <select id="audio-device-select" class="dropdown">
-            <option value="default">Default Audio Input</option>
-          </select>
+        <!-- Live Audio Selector & Gain -->
+        <div class="audio-input-cluster">
+          <div class="device-selector-wrapper" title="Select Audio Input Device">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+            <select id="audio-device-select" class="dropdown">
+              <option value="default">Default Audio Input</option>
+            </select>
+          </div>
+          <div class="audio-gain-wrapper" title="Livello di ingresso / Gain audio (0.1x - 6.0x)">
+            <span class="gain-label">GAIN</span>
+            <input type="range" id="slider-audio-gain" class="slider-gain" min="0.1" max="6.0" step="0.1" value="1.0">
+            <span id="badge-audio-gain" class="badge-gain">1.0x</span>
+          </div>
+          <!-- Live Input Level Meter -->
+          <div class="audio-vu-wrapper" title="Livello di ingresso microfono in tempo reale">
+            <span class="vu-title">IN</span>
+            <div class="header-vu-track">
+              <div id="header-vu-fill" class="header-vu-fill"></div>
+              <div id="header-vu-peak" class="header-vu-peak"></div>
+            </div>
+            <span id="header-vu-db" class="header-vu-db">-inf</span>
+          </div>
         </div>
 
         <!-- OSC Status Pill -->
@@ -74,6 +94,24 @@
         <div class="p5-version-wrapper" title="Seleziona la versione di p5.js per questo progetto (come su editor.p5js.org)">
           <span class="p5-badge">p5*</span>
           <select id="select-p5-version" class="dropdown dropdown-p5">
+            <option value="2.3.4">2.3.4 (Latest)</option>
+            <option value="2.3.2">2.3.2</option>
+            <option value="2.3.1">2.3.1</option>
+            <option value="2.3.0">2.3.0</option>
+            <option value="2.2.3">2.2.3</option>
+            <option value="2.2.2">2.2.2</option>
+            <option value="2.2.1">2.2.1</option>
+            <option value="2.2.0">2.2.0</option>
+            <option value="2.1.2">2.1.2</option>
+            <option value="2.1.1">2.1.1</option>
+            <option value="2.0.5">2.0.5</option>
+            <option value="2.0.4">2.0.4</option>
+            <option value="2.0.3">2.0.3</option>
+            <option value="2.0.2">2.0.2</option>
+            <option value="2.0.1">2.0.1</option>
+            <option value="2.0.0">2.0.0</option>
+            <option value="1.11.13">1.11.13 (Not Maintained)</option>
+            <option value="1.11.12">1.11.12</option>
             <option value="1.11.2">1.11.2 (Latest 1.x)</option>
             <option value="1.11.1">1.11.1</option>
             <option value="1.11.0">1.11.0</option>
@@ -85,7 +123,6 @@
             <option value="1.6.0">1.6.0</option>
             <option value="1.5.0">1.5.0</option>
             <option value="1.4.2">1.4.2</option>
-            <option value="2.0.0-beta.2">2.0.0-beta.2 (p5.js 2.0)</option>
             <option value="local">Locale (Offline)</option>
           </select>
         </div>
@@ -222,6 +259,30 @@
         </div>
 
         <div class="panel-body" id="body-audio-panel">
+          <!-- Audio Input Level & Preamp Controls -->
+          <div class="audio-input-controls-row">
+            <div class="gain-control-group">
+              <span class="ctrl-sublabel">INPUT GAIN:</span>
+              <input type="range" id="panel-slider-audio-gain" class="slider-gain slider-panel" min="0.1" max="6.0" step="0.1" value="1.0">
+              <span id="panel-badge-audio-gain" class="badge-gain">1.0x</span>
+              <div class="gain-presets">
+                <button type="button" class="btn-gain-preset" data-gain="0.5">0.5x</button>
+                <button type="button" class="btn-gain-preset" data-gain="1.0">1x</button>
+                <button type="button" class="btn-gain-preset" data-gain="2.0">2x</button>
+                <button type="button" class="btn-gain-preset" data-gain="4.0">4x</button>
+              </div>
+            </div>
+            <div class="input-meter-group">
+              <span class="ctrl-sublabel">MIC LEVEL:</span>
+              <div class="input-vu-track" title="Audio Input Level VU">
+                <div id="input-vu-fill" class="input-vu-fill"></div>
+                <div id="input-vu-peak" class="input-vu-peak"></div>
+              </div>
+              <span id="panel-vu-db" class="badge-db">-inf</span>
+              <button type="button" id="btn-reconnect-audio" class="btn-gain-preset btn-mic-reconnect" title="Ricollega o riavvia acquisizione microfono">↻ Mic</button>
+            </div>
+          </div>
+
           <!-- FFT & Oscilloscope Canvases -->
           <div class="visualizer-canvases">
             <div class="visualizer-box">
