@@ -579,6 +579,28 @@ test('15. Verify Collapsible Audio DSP Engine and OSC Monitor Panels', () => {
 });
 
 // ----------------------------------------------------
+// 16. Test Clean Project Switching & File Tree Synchronization
+// ----------------------------------------------------
+test('16. Verify Clean Project Switching, File Tree Rebuilding and State Persistence', () => {
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('switchProject('), 'main.js must implement switchProject');
+  assert.ok(mainJsSrc.includes('model.dispose()'), 'main.js must dispose old Monaco models when switching project');
+  assert.ok(mainJsSrc.includes('this.openFiles.clear()'), 'main.js must clear openFiles map when switching project');
+  assert.ok(mainJsSrc.includes('onProjectSwitched'), 'main.js must listen for onProjectSwitched');
+  assert.ok(mainJsSrc.includes("key === 'o' || e.key === 'O'"), 'main.js must support Cmd+O / Ctrl+O for open project');
+
+  const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainIndexSrc.includes('switchActiveProject('), 'main/index.js must implement switchActiveProject');
+  assert.ok(mainIndexSrc.includes('saveLastProjectPath('), 'main/index.js must implement saveLastProjectPath');
+  assert.ok(mainIndexSrc.includes('getSavedLastProjectPath()'), 'main/index.js must implement getSavedLastProjectPath');
+  assert.ok(mainIndexSrc.includes("app.on('open-file'"), 'main/index.js must handle macOS open-file event');
+  assert.ok(mainIndexSrc.includes("project:switched"), 'main/index.js must broadcast project:switched');
+
+  const preloadCjsSrc = fs.readFileSync(path.join(projectRoot, 'src/preload/idePreload.cjs'), 'utf-8');
+  assert.ok(preloadCjsSrc.includes('onProjectSwitched'), 'idePreload.cjs must expose onProjectSwitched');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

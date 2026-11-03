@@ -81,6 +81,90 @@ function resolveDefaultSketchPath() {
   return templateDir || path.resolve(__dirname, '../../templates/default-sketch');
 }
 
+// =========================================================================
+// Project Persistence & Path Resolution
+// =========================================================================
+let pendingOpenProjectPath = null;
+
+function resolvePathToProjectDir(candidatePath) {
+  if (!candidatePath || typeof candidatePath !== 'string') return null;
+  try {
+    const abs = path.resolve(candidatePath);
+    if (!fs.existsSync(abs)) return null;
+    const stat = fs.statSync(abs);
+    if (stat.isDirectory()) return abs;
+    if (stat.isFile()) return path.dirname(abs);
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+function getLastProjectPathFile() {
+  return path.join(app.getPath('userData'), 'last_project.json');
+}
+
+function saveLastProjectPath(projPath) {
+  if (!projPath) return;
+  try {
+    const filePath = getLastProjectPathFile();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ projectPath: path.resolve(projPath), lastOpened: Date.now() }, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('[Main] Failed to save last project path:', e);
+  }
+}
+
+function getSavedLastProjectPath() {
+  try {
+    const filePath = getLastProjectPathFile();
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (data && data.projectPath && fs.existsSync(data.projectPath)) {
+        return data.projectPath;
+      }
+    }
+  } catch (e) {
+    console.warn('[Main] Failed to read last project path:', e);
+  }
+  return null;
+}
+
+async function switchActiveProject(rawPath) {
+  const projDir = resolvePathToProjectDir(rawPath);
+  if (!projDir || !fs.existsSync(projDir)) return null;
+
+  await projectManager.setProjectPath(projDir);
+  saveLastProjectPath(projDir);
+
+  const projectData = {
+    projectPath: projectManager.getProjectPath(),
+    serverUrl: projectManager.getServerUrl(),
+    files: projectManager.listFiles()
+  };
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('project:switched', projectData);
+  }
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    previewWindow.webContents.reload();
+  }
+  return projectData;
+}
+
+// macOS dock drag-drop / Finder "Open With" handler
+app.on('open-file', async (event, filePath) => {
+  event.preventDefault();
+  const projDir = resolvePathToProjectDir(filePath);
+  if (projDir) {
+    if (projectManager && mainWindow && !mainWindow.isDestroyed()) {
+      await switchActiveProject(projDir);
+    } else {
+      pendingOpenProjectPath = projDir;
+    }
+  }
+});
+
 async function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1600,
@@ -497,20 +581,17 @@ function setupIPC() {
     };
   });
 
-  ipcMain.handle('project:openFolder', async () => {
+  ipcMain.handle('project:openFolder', async (event, explicitPath) => {
+    if (explicitPath) {
+      return await switchActiveProject(explicitPath);
+    }
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Open p5.js / GLSL Project Folder',
-      properties: ['openDirectory', 'createDirectory']
+      title: 'Open p5.js / GLSL Project Folder or File',
+      properties: ['openDirectory', 'openFile', 'createDirectory']
     });
 
     if (!result.canceled && result.filePaths.length > 0) {
-      const selected = result.filePaths[0];
-      await projectManager.setProjectPath(selected);
-      return {
-        projectPath: projectManager.getProjectPath(),
-        serverUrl: projectManager.getServerUrl(),
-        files: projectManager.listFiles()
-      };
+      return await switchActiveProject(result.filePaths[0]);
     }
     return null;
   });
@@ -911,9 +992,34 @@ async function startDeterministicExport(options) {
 // App Lifecycle
 // =========================================================================
 app.whenReady().then(async () => {
+  // Determine initial project path:
+  // 1. Pending file/folder path from macOS open-file event
+  // 2. Command-line argument
+  // 3. Saved last project path from previous session
+  // 4. Default sketch template fallback
+  let initialProjectPath = pendingOpenProjectPath;
+  if (!initialProjectPath) {
+    const args = process.argv.slice(app.isPackaged ? 1 : 2);
+    for (const arg of args) {
+      if (arg && !arg.startsWith('-')) {
+        const resolved = resolvePathToProjectDir(arg);
+        if (resolved) {
+          initialProjectPath = resolved;
+          break;
+        }
+      }
+    }
+  }
+  if (!initialProjectPath) {
+    initialProjectPath = getSavedLastProjectPath();
+  }
+  if (!initialProjectPath || !fs.existsSync(initialProjectPath)) {
+    initialProjectPath = resolveDefaultSketchPath();
+  }
+  saveLastProjectPath(initialProjectPath);
+
   // Initialize Services
-  const defaultSketchPath = resolveDefaultSketchPath();
-  projectManager = new ProjectManager(defaultSketchPath);
+  projectManager = new ProjectManager(initialProjectPath);
   await projectManager.startServer();
 
   oscBridge = new OscBridge({ rxPort: 9000, txPort: 9001 });

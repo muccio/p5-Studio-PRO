@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- Project Management ---
   project: {
     getInfo: () => ipcRenderer.invoke('project:getInfo'),
-    openFolder: () => ipcRenderer.invoke('project:openFolder'),
+    openFolder: (explicitPath) => ipcRenderer.invoke('project:openFolder', explicitPath),
     listFiles: () => ipcRenderer.invoke('project:listFiles'),
     readFile: (relativePath) => ipcRenderer.invoke('project:readFile', relativePath),
     writeFile: (relativePath, content) => ipcRenderer.invoke('project:writeFile', { relativePath, content }),
@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     renameItem: (oldPath, newPath) => ipcRenderer.invoke('project:renameItem', { oldPath, newPath }),
     loadShader: (filePath) => ipcRenderer.invoke('project:loadShader', { filePath }),
     mapCompilerErrors: (infoLog, sourceTable) => ipcRenderer.invoke('project:mapCompilerErrors', { infoLog, sourceTable }),
+    onProjectSwitched: (callback) => {
+      const listener = (event, data) => callback(data);
+      ipcRenderer.on('project:switched', listener);
+      return () => ipcRenderer.removeListener('project:switched', listener);
+    },
     onFileChanged: (callback) => {
       const listener = (event, data) => callback(data);
       ipcRenderer.on('project:fileChanged', listener);

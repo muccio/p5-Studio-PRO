@@ -108,6 +108,13 @@ class IDEApp {
         this.loadPreview();
       }
 
+      // Listen for project switch events from main process (e.g. macOS open-file, CLI args, etc.)
+      if (window.electronAPI.project.onProjectSwitched) {
+        window.electronAPI.project.onProjectSwitched(async (projectData) => {
+          await this.switchProject(projectData);
+        });
+      }
+
       // Listen for project file changes from main process watcher
       window.electronAPI.project.onFileChanged((change) => {
         this.handleExternalFileChange(change);
@@ -517,6 +524,54 @@ class IDEApp {
   // =========================================================================
   // 2. Project Explorer & File Tree
   // =========================================================================
+  async switchProject(projectInfo) {
+    if (!projectInfo || !projectInfo.projectPath) return;
+    this.projectInfo = projectInfo;
+
+    // 1. Dispose old Monaco models to avoid stale cache and memory leaks
+    for (const [filePath, fileRecord] of this.openFiles.entries()) {
+      try {
+        if (fileRecord && fileRecord.model && !fileRecord.model.isDisposed()) {
+          fileRecord.model.dispose();
+        }
+      } catch (e) {
+        console.warn('[Monaco] Model dispose warning:', e);
+      }
+    }
+    this.openFiles.clear();
+    this.activeFilePath = null;
+
+    // 2. Clear old tabs from the UI tab bar
+    const tabBar = document.getElementById('tab-bar');
+    if (tabBar) {
+      tabBar.innerHTML = '';
+    }
+
+    // 3. Update project title label
+    const projectName = projectInfo.projectPath.split(/[\\/]/).pop() || 'PROJECT';
+    const labelProject = document.getElementById('label-project-name');
+    if (labelProject) {
+      labelProject.textContent = projectName;
+    }
+
+    // 4. Rebuild file tree on the left from the new project files
+    await this.refreshFileTree();
+
+    // 5. Automatically open sketch.js or the first file of the new project
+    if (window.electronAPI) {
+      const files = await window.electronAPI.project.listFiles();
+      const sketchFile = files.find(f => f.name === 'sketch.js');
+      if (sketchFile) {
+        await this.openFile('sketch.js');
+      } else if (files.length > 0 && files[0].type === 'file') {
+        await this.openFile(files[0].path);
+      }
+    }
+
+    // 6. Reload preview sandbox and live stage
+    this.restartPreview();
+  }
+
   async refreshFileTree() {
     if (!window.electronAPI) return;
     const files = await window.electronAPI.project.listFiles();
@@ -2043,22 +2098,22 @@ class IDEApp {
   // 12. Event Listeners Wiring
   // =========================================================================
   initEventListeners() {
-    // Global hotkey: Cmd+Enter or Ctrl+Enter -> Push to Live Stage
+    // Global hotkeys: Cmd+Enter / Ctrl+Enter (Push Live Stage), Cmd+O / Ctrl+O (Open Project)
     window.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
         this.pushToLiveStage();
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'o' || e.key === 'O')) {
+        e.preventDefault();
+        const btnOpen = document.getElementById('btn-open-project');
+        if (btnOpen) btnOpen.click();
       }
     });
 
     document.getElementById('btn-open-project').addEventListener('click', async () => {
       const res = await window.electronAPI.project.openFolder();
       if (res) {
-        this.projectInfo = res;
-        document.getElementById('label-project-name').textContent =
-          res.projectPath.split(/[\\/]/).pop();
-        await this.refreshFileTree();
-        this.restartPreview();
+        await this.switchProject(res);
       }
     });
 
