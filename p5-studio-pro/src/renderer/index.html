@@ -199,6 +199,45 @@
         <!-- Dynamic Open Tabs -->
       </div>
       <div id="monaco-container" class="monaco-host"></div>
+
+      <!-- INTEGRATED CONSOLE & DEBUG DRAWER -->
+      <div class="console-panel" id="panel-console">
+        <div class="panel-header panel-header-collapsible console-header" id="header-console-panel" title="Click per comprimere / espandere la Console di Debug">
+          <div class="panel-header-left">
+            <span class="panel-collapse-icon" id="collapse-icon-console">
+              <svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+            </span>
+            <span class="panel-title">CONSOLE &amp; DEBUG</span>
+            <span id="console-count-badge" class="badge">0</span>
+          </div>
+          <div class="console-header-actions">
+            <div class="console-filter-group">
+              <button type="button" class="btn-console-filter active" data-filter="all" title="Mostra tutti i messaggi">Tutti</button>
+              <button type="button" class="btn-console-filter" data-filter="log" title="Solo console.log / print">Log</button>
+              <button type="button" class="btn-console-filter" data-filter="warn" title="Solo avvisi console.warn">Warn</button>
+              <button type="button" class="btn-console-filter" data-filter="error" title="Solo errori console.error & runtime">Error</button>
+            </div>
+            <label class="console-autoclear-label" title="Pulisce automaticamente la console ad ogni riavvio dello sketch">
+              <input type="checkbox" id="chk-console-autoclear" checked>
+              <span>Auto-Clear</span>
+            </label>
+            <button type="button" id="btn-clear-console" class="btn-console-clear" title="Pulisci Console (Clear)">
+              <svg class="icon-small" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              <span>Pulisci</span>
+            </button>
+          </div>
+        </div>
+        <div class="panel-body console-body" id="body-console-panel">
+          <div id="console-log-list" class="console-log-container">
+            <div class="console-entry console-empty">Console pronta — usa <code>console.log()</code> o <code>print()</code> nello sketch per il debug.</div>
+          </div>
+          <div class="console-eval-bar">
+            <span class="console-prompt-symbol">&gt;</span>
+            <input type="text" id="console-eval-input" class="console-eval-input" placeholder="Valuta espressione JS nello sketch (es. frameRate(), width, mouseX) e premi Invio..." autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+      </div>
+
       <div id="editor-status-bar" class="editor-status-bar">
         <div class="editor-status-left">
           <span id="status-file-info">sketch.js</span>

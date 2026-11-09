@@ -84,6 +84,18 @@ class IDEApp {
     this.currentFontFamily = localStorage.getItem('p5_studio_font_family') || "JetBrains Mono, 'Fira Code', Menlo, Consolas, monospace";
     const savedOpacity = parseFloat(localStorage.getItem('p5_studio_window_opacity') || '1.0');
     this.currentWindowOpacity = (!isNaN(savedOpacity) && savedOpacity >= 0.2 && savedOpacity <= 1.0) ? savedOpacity : 1.0;
+
+    // Anti-cursor-jump save/watch synchronization state
+    this.pendingSaveTimer = null;
+    this.isSavingFile = false;
+    this.isApplyingExternalChange = false;
+    this.lastUserEditTime = 0;
+    this.lastSavedContentByFile = new Map();
+
+    // Console & Debug panel state
+    this.consoleEntries = [];
+    this.consoleFilter = 'all';
+    this.consoleAutoClear = localStorage.getItem('p5_studio_console_autoclear') !== 'false';
   }
 
   async init() {
@@ -93,6 +105,7 @@ class IDEApp {
     this.initEventListeners();
     this.initAudioMeters();
     this.initAudioGainControls();
+    this.initConsoleControls();
     this.initLiveWindowControls();
 
     // Check & request macOS system microphone permission early
@@ -264,20 +277,32 @@ class IDEApp {
     });
 
     // Auto-save on edit with debounce & instant preview update
-    let saveTimeout = null;
     this.editor.onDidChangeModelContent(() => {
-      if (!this.activeFilePath) return;
+      if (!this.activeFilePath || this.isApplyingExternalChange) return;
 
-      if (saveTimeout) clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(async () => {
+      this.lastUserEditTime = Date.now();
+      if (this.pendingSaveTimer) clearTimeout(this.pendingSaveTimer);
+
+      this.pendingSaveTimer = setTimeout(async () => {
+        this.pendingSaveTimer = null;
+        if (!this.activeFilePath) return;
+
+        const targetPath = this.activeFilePath.replace(/\\/g, '/');
         const content = this.editor.getValue();
-        if (window.electronAPI) {
-          await window.electronAPI.project.writeFile(this.activeFilePath, content);
+        this.lastSavedContentByFile.set(targetPath, content);
+
+        this.isSavingFile = true;
+        try {
+          if (window.electronAPI) {
+            await window.electronAPI.project.writeFile(targetPath, content);
+          }
+        } finally {
+          this.isSavingFile = false;
         }
         this.validateActiveShader();
 
         // Update preview dynamically
-        const ext = this.activeFilePath.split('.').pop().toLowerCase();
+        const ext = targetPath.split('.').pop().toLowerCase();
         const frame = document.getElementById('preview-frame');
         if (isShaderFile(ext)) {
           if (frame && frame.contentWindow) {
@@ -315,7 +340,7 @@ class IDEApp {
             }
           }
         }
-      }, 250);
+      }, 400);
     });
 
     // Window resize handler
@@ -329,6 +354,7 @@ class IDEApp {
   }
 
   async openFile(relativePath) {
+    relativePath = (relativePath || '').replace(/\\/g, '/');
     if (this.openFiles.has(relativePath)) {
       this.setActiveTab(relativePath);
       return;
@@ -339,6 +365,7 @@ class IDEApp {
       if (window.electronAPI) {
         content = await window.electronAPI.project.readFile(relativePath);
       }
+      this.lastSavedContentByFile.set(relativePath, content);
       const ext = relativePath.split('.').pop().toLowerCase();
       let language = 'javascript';
 
@@ -656,31 +683,84 @@ class IDEApp {
   }
 
   handleExternalFileChange(change) {
-    if (this.openFiles.has(change.filename)) {
-      window.electronAPI.project.readFile(change.filename).then((content) => {
-        const fileRecord = this.openFiles.get(change.filename);
+    if (!change || !change.filename) return;
+    // Ignore watcher echoes during or right after user edits / internal saves
+    if (
+      this.isSavingFile ||
+      this.pendingSaveTimer !== null ||
+      (Date.now() - this.lastUserEditTime < 2500)
+    ) {
+      return;
+    }
+
+    const normPath = change.filename.replace(/\\/g, '/');
+
+    if (this.openFiles.has(normPath) && change.exists !== false) {
+      window.electronAPI.project.readFile(normPath).then((content) => {
+        if (
+          this.isSavingFile ||
+          this.pendingSaveTimer !== null ||
+          (Date.now() - this.lastUserEditTime < 2500)
+        ) {
+          return;
+        }
+        if (this.lastSavedContentByFile.get(normPath) === content) {
+          return;
+        }
+        const fileRecord = this.openFiles.get(normPath);
+        if (!fileRecord || !fileRecord.model || fileRecord.model.isDisposed()) return;
+
         if (fileRecord.model.getValue() !== content) {
-          fileRecord.model.setValue(content);
+          this.lastSavedContentByFile.set(normPath, content);
+          this.isApplyingExternalChange = true;
+          try {
+            const isActive = this.activeFilePath === normPath && this.editor;
+            const savedViewState = isActive ? this.editor.saveViewState() : fileRecord.viewState;
+            const savedPos = isActive ? this.editor.getPosition() : null;
+
+            fileRecord.model.pushEditOperations(
+              [],
+              [{ range: fileRecord.model.getFullModelRange(), text: content }],
+              () => null
+            );
+
+            if (isActive) {
+              if (savedViewState) this.editor.restoreViewState(savedViewState);
+              if (savedPos) this.editor.setPosition(savedPos);
+            }
+          } finally {
+            this.isApplyingExternalChange = false;
+          }
         }
       });
     }
-    this.refreshFileTree();
+
+    if (change.eventType === 'rename' || !change.exists || !this.openFiles.has(normPath)) {
+      this.refreshFileTree();
+    }
   }
 
   // =========================================================================
-  // 3. Preview Sandbox Management
+  // 3. Preview Sandbox Management & Integrated Debug Console
   // =========================================================================
   loadPreview() {
     if (!this.projectInfo || !this.projectInfo.serverUrl) return;
     const frame = document.getElementById('preview-frame');
     frame.src = `${this.projectInfo.serverUrl}/index.html?t=${Date.now()}`;
 
+    if (this._previewListenersAttached) return;
+    this._previewListenersAttached = true;
+
     // Listen for messages from preview iframe
     window.addEventListener('message', (event) => {
       const data = event.data;
       if (!data) return;
 
-      if (data.type === 'shader:diagnostics' && data.errors) {
+      if (data.type === 'console:batch' && Array.isArray(data.entries)) {
+        this.appendConsoleBatch(data.entries);
+      } else if (data.type === 'console:clear') {
+        this.clearConsole();
+      } else if (data.type === 'shader:diagnostics' && data.errors) {
         setModelDiagnostics(this.editor, data.errors);
         document.getElementById('status-diagnostics').className = 'diagnostic-error';
         document.getElementById('status-diagnostics').textContent = `GLSL Error (${data.errors.length})`;
@@ -688,6 +768,12 @@ class IDEApp {
         const errMsg = data.log ? data.log.split('\n')[0] : 'Compilation error';
         document.getElementById('status-diagnostics').className = 'diagnostic-error';
         document.getElementById('status-diagnostics').textContent = `Shader Error: ${errMsg}`;
+        this.appendConsoleBatch([{
+          level: 'error',
+          text: `[GLSL Shader Error] ${data.log || errMsg}`,
+          count: 1,
+          timestamp: Date.now()
+        }]);
       } else if (data.type === 'shader:success') {
         clearModelDiagnostics(this.editor);
         document.getElementById('status-diagnostics').className = 'diagnostic-clean';
@@ -696,11 +782,17 @@ class IDEApp {
         const isGenericScriptError = data.message === 'Script error.' || !data.lineno || data.lineno <= 0;
         this.hasJsErrors = true;
         const diagSpan = document.getElementById('status-diagnostics');
+        const loc = !isGenericScriptError && data.lineno ? ` (L${data.lineno})` : '';
         if (diagSpan) {
           diagSpan.className = 'diagnostic-error';
-          const loc = !isGenericScriptError && data.lineno ? ` (L${data.lineno})` : '';
           diagSpan.textContent = `JS Error: ${data.message}${loc}`;
         }
+        this.appendConsoleBatch([{
+          level: 'error',
+          text: `${data.message}${loc}`,
+          count: 1,
+          timestamp: Date.now()
+        }]);
         if (!isGenericScriptError && data.lineno && this.editor && this.activeFilePath && this.activeFilePath.endsWith('.js')) {
           const model = this.editor.getModel();
           if (model && data.lineno <= model.getLineCount()) {
@@ -742,6 +834,12 @@ class IDEApp {
 
   restartPreview() {
     this.hasJsErrors = false;
+    if (this.consoleAutoClear) {
+      this.clearConsole();
+    }
+    const hadEditorFocus = this.editor && this.editor.hasTextFocus();
+    const savedPos = hadEditorFocus ? this.editor.getPosition() : null;
+
     if (this.editor && this.editor.getModel()) {
       monaco.editor.setModelMarkers(this.editor.getModel(), 'p5-runtime', []);
     }
@@ -758,9 +856,159 @@ class IDEApp {
         frame.src = frame.src;
       }
     }
+    if (hadEditorFocus && this.editor) {
+      this.editor.focus();
+      if (savedPos) this.editor.setPosition(savedPos);
+    }
     if (window.electronAPI) {
       // NOTE: Never reload liveWindow from restartPreview! Live Stage is isolated and explicitly pushed.
       if (window.electronAPI.preview) window.electronAPI.preview.reload();
+    }
+  }
+
+  initConsoleControls() {
+    const clearBtn = document.getElementById('btn-clear-console');
+    const autoClearChk = document.getElementById('chk-console-autoclear');
+    const evalInput = document.getElementById('console-eval-input');
+    const filterBtns = document.querySelectorAll('.btn-console-filter');
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.clearConsole();
+      });
+    }
+
+    if (autoClearChk) {
+      autoClearChk.checked = this.consoleAutoClear;
+      autoClearChk.addEventListener('change', (e) => {
+        e.stopPropagation();
+        this.consoleAutoClear = !!e.target.checked;
+      });
+    }
+
+    filterBtns.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        filterBtns.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.consoleFilter = btn.getAttribute('data-filter') || 'all';
+        this.renderConsoleEntries();
+      });
+    });
+
+    if (evalInput) {
+      evalInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const expr = evalInput.value.trim();
+          if (!expr) return;
+          evalInput.value = '';
+          this.appendConsoleBatch([{
+            level: 'info',
+            text: `> ${expr}`,
+            count: 1,
+            timestamp: Date.now()
+          }]);
+          const frame = document.getElementById('preview-frame');
+          if (frame && frame.contentWindow) {
+            frame.contentWindow.postMessage({ type: 'console:eval', expr }, '*');
+          }
+        }
+      });
+    }
+  }
+
+  clearConsole() {
+    this.consoleEntries = [];
+    this.renderConsoleEntries();
+  }
+
+  appendConsoleBatch(entries) {
+    if (!Array.isArray(entries) || entries.length === 0) return;
+
+    for (const incoming of entries) {
+      const level = incoming.level || 'log';
+      const text = String(incoming.text ?? '');
+      const count = incoming.count || 1;
+      const timestamp = incoming.timestamp || Date.now();
+
+      const last = this.consoleEntries[this.consoleEntries.length - 1];
+      if (last && last.level === level && last.text === text) {
+        last.count += count;
+        last.timestamp = timestamp;
+      } else {
+        this.consoleEntries.push({ level, text, count, timestamp });
+      }
+    }
+
+    if (this.consoleEntries.length > this.maxConsoleEntries) {
+      this.consoleEntries.splice(0, this.consoleEntries.length - this.maxConsoleEntries);
+    }
+
+    this.renderConsoleEntries();
+  }
+
+  renderConsoleEntries() {
+    const listEl = document.getElementById('console-log-list');
+    const badgeEl = document.getElementById('console-count-badge');
+    if (!listEl) return;
+
+    const totalCount = this.consoleEntries.reduce((acc, item) => acc + (item.count || 1), 0);
+    const hasErrors = this.consoleEntries.some((item) => item.level === 'error');
+    const hasWarns = this.consoleEntries.some((item) => item.level === 'warn');
+
+    if (badgeEl) {
+      badgeEl.textContent = String(totalCount);
+      badgeEl.classList.toggle('has-errors', hasErrors);
+      badgeEl.classList.toggle('has-warns', !hasErrors && hasWarns);
+    }
+
+    const filtered = this.consoleEntries.filter((item) => {
+      if (this.consoleFilter === 'all') return true;
+      if (this.consoleFilter === 'log') return item.level === 'log' || item.level === 'info' || item.level === 'debug' || item.level === 'result';
+      return item.level === this.consoleFilter;
+    });
+
+    if (filtered.length === 0) {
+      listEl.innerHTML = '<div class="console-empty-hint">Console ready — use console.log() or print() in your sketch</div>';
+      return;
+    }
+
+    const isNearBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 48;
+    listEl.innerHTML = '';
+
+    const frag = document.createDocumentFragment();
+    for (const item of filtered) {
+      const row = document.createElement('div');
+      row.className = `console-entry level-${item.level}`;
+
+      const d = new Date(item.timestamp);
+      const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+
+      const tsSpan = document.createElement('span');
+      tsSpan.className = 'console-timestamp';
+      tsSpan.textContent = timeStr;
+      row.appendChild(tsSpan);
+
+      if (item.count > 1) {
+        const badge = document.createElement('span');
+        badge.className = 'console-repeat-badge';
+        badge.textContent = `${item.count}`;
+        row.appendChild(badge);
+      }
+
+      const textSpan = document.createElement('span');
+      textSpan.className = 'console-text';
+      textSpan.textContent = item.text;
+      row.appendChild(textSpan);
+
+      frag.appendChild(row);
+    }
+
+    listEl.appendChild(frag);
+    if (isNearBottom) {
+      listEl.scrollTop = listEl.scrollHeight;
     }
   }
 
@@ -2228,8 +2476,10 @@ class IDEApp {
   initCollapsiblePanels() {
     const audioPanel = document.getElementById('panel-audio');
     const oscPanel = document.getElementById('panel-osc');
+    const consolePanel = document.getElementById('panel-console');
     const audioHeader = document.getElementById('header-audio-panel');
     const oscHeader = document.getElementById('header-osc-panel');
+    const consoleHeader = document.getElementById('header-console-panel');
 
     const restoreState = (panel, storageKey) => {
       try {
@@ -2242,13 +2492,16 @@ class IDEApp {
       }
     };
 
-    const togglePanel = (panel, storageKey) => {
+    const togglePanel = (panel, storageKey, relayoutEditor = false) => {
       if (!panel) return;
       const collapsed = panel.classList.toggle('collapsed');
       try {
         localStorage.setItem(storageKey, collapsed ? 'true' : 'false');
       } catch (e) {
         console.warn('[CollapsiblePanels] Failed to write localStorage', e);
+      }
+      if (relayoutEditor && this.editor) {
+        setTimeout(() => this.editor.layout(), 50);
       }
     };
 
@@ -2265,6 +2518,14 @@ class IDEApp {
       oscHeader.addEventListener('click', (e) => {
         if (e.target.closest('button') || e.target.closest('select')) return;
         togglePanel(oscPanel, 'p5_studio_osc_panel_collapsed');
+      });
+    }
+
+    if (consoleHeader && consolePanel) {
+      restoreState(consolePanel, 'p5_studio_console_panel_collapsed');
+      consoleHeader.addEventListener('click', (e) => {
+        if (e.target.closest('button') || e.target.closest('select') || e.target.closest('label') || e.target.closest('input')) return;
+        togglePanel(consolePanel, 'p5_studio_console_panel_collapsed', true);
       });
     }
   }

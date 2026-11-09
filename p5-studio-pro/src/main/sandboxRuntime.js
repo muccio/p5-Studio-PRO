@@ -24,6 +24,138 @@
   const exportOscPath = urlParams.get('oscPath') || null;
 
   // =========================================================================
+  // 0. IDE Console Debug Bridge (console.log, warn, error, info, clear, print)
+  // =========================================================================
+  const _origConsole = {
+    log: console.log.bind(console),
+    info: console.info ? console.info.bind(console) : console.log.bind(console),
+    warn: console.warn ? console.warn.bind(console) : console.log.bind(console),
+    error: console.error ? console.error.bind(console) : console.log.bind(console),
+    debug: console.debug ? console.debug.bind(console) : console.log.bind(console),
+    clear: console.clear ? console.clear.bind(console) : () => {}
+  };
+
+  function formatConsoleArg(arg, depth = 0) {
+    if (arg === null) return 'null';
+    if (arg === undefined) return 'undefined';
+    if (typeof arg === 'string') return depth === 0 ? arg : JSON.stringify(arg);
+    if (typeof arg === 'number' || typeof arg === 'boolean' || typeof arg === 'bigint') return String(arg);
+    if (typeof arg === 'function') return `[Function: ${arg.name || 'anonymous'}]`;
+    if (arg instanceof Error) return `${arg.name || 'Error'}: ${arg.message}`;
+    if (typeof arg === 'object') {
+      if (
+        typeof arg.x === 'number' &&
+        typeof arg.y === 'number' &&
+        typeof arg.z === 'number' &&
+        arg.constructor &&
+        (arg.constructor.name === 'Vector' || arg.isPInst)
+      ) {
+        return `p5.Vector(${Number(arg.x).toFixed(2)}, ${Number(arg.y).toFixed(2)}, ${Number(arg.z).toFixed(2)})`;
+      }
+      if (depth > 2) return Array.isArray(arg) ? `[Array(${arg.length})]` : '[Object]';
+      try {
+        if (Array.isArray(arg)) {
+          const preview = arg.slice(0, 20).map(item => formatConsoleArg(item, depth + 1)).join(', ');
+          return `[${preview}${arg.length > 20 ? `, ... (${arg.length} items)` : ''}]`;
+        }
+        const seen = new WeakSet();
+        const json = JSON.stringify(arg, (key, val) => {
+          if (typeof val === 'object' && val !== null) {
+            if (seen.has(val)) return '[Circular]';
+            seen.add(val);
+          }
+          if (typeof val === 'function') return `[Function: ${val.name || 'anonymous'}]`;
+          return val;
+        });
+        if (json && json.length > 500) {
+          return json.slice(0, 500) + '... }';
+        }
+        return json || String(arg);
+      } catch (e) {
+        return String(arg);
+      }
+    }
+    return String(arg);
+  }
+
+  let _consoleQueue = [];
+  let _consoleFlushScheduled = false;
+
+  function flushConsoleQueue() {
+    _consoleFlushScheduled = false;
+    if (_consoleQueue.length === 0) return;
+    const batch = _consoleQueue.splice(0, 100);
+    _consoleQueue.length = 0;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'console:batch',
+        entries: batch
+      }, '*');
+    }
+  }
+
+  function pushConsoleEntry(level, args) {
+    if (isExportMode) return;
+    if (args.length > 0 && typeof args[0] === 'string') {
+      const first = args[0];
+      if (
+        first.startsWith('[ideAudio]') ||
+        first.startsWith('[sandboxRuntime]') ||
+        first.startsWith('[Sandbox]') ||
+        first.startsWith('[ideShader]') ||
+        first.startsWith('[ideOSC]')
+      ) {
+        return;
+      }
+    }
+    const text = args.map(a => formatConsoleArg(a, 0)).join(' ');
+    const last = _consoleQueue[_consoleQueue.length - 1];
+    if (last && last.level === level && last.text === text) {
+      last.count = (last.count || 1) + 1;
+      last.timestamp = Date.now();
+    } else if (_consoleQueue.length < 120) {
+      _consoleQueue.push({
+        level,
+        text,
+        count: 1,
+        timestamp: Date.now()
+      });
+    }
+    if (!_consoleFlushScheduled) {
+      _consoleFlushScheduled = true;
+      setTimeout(flushConsoleQueue, 32);
+    }
+  }
+
+  console.log = function (...args) {
+    _origConsole.log(...args);
+    pushConsoleEntry('log', args);
+  };
+  console.info = function (...args) {
+    _origConsole.info(...args);
+    pushConsoleEntry('info', args);
+  };
+  console.warn = function (...args) {
+    _origConsole.warn(...args);
+    pushConsoleEntry('warn', args);
+  };
+  console.error = function (...args) {
+    _origConsole.error(...args);
+    pushConsoleEntry('error', args);
+  };
+  console.debug = function (...args) {
+    _origConsole.debug(...args);
+    pushConsoleEntry('log', args);
+  };
+  console.clear = function () {
+    _origConsole.clear();
+    _consoleQueue.length = 0;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'console:clear' }, '*');
+    }
+  };
+
+  // =========================================================================
   // 1. WebGL Context & Precision Enforcement
   // =========================================================================
   const origGetContext = HTMLCanvasElement.prototype.getContext;
@@ -873,6 +1005,13 @@
       if (window.noLoop && typeof window.noLoop === 'function') window.noLoop();
     } else if (data.type === 'sketch:resume') {
       if (window.loop && typeof window.loop === 'function') window.loop();
+    } else if (data.type === 'console:eval' && typeof data.expr === 'string') {
+      try {
+        const result = (0, eval)(data.expr);
+        pushConsoleEntry('result', [`← ${formatConsoleArg(result, 0)}`]);
+      } catch (err) {
+        pushConsoleEntry('error', [`${err.name || 'Error'}: ${err.message}`]);
+      }
     }
   });
 

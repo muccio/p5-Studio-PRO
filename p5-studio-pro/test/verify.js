@@ -686,6 +686,35 @@ test('18. Verify macOS Microphone TCC Description, Continuous DSP Loop and Live 
 });
 
 // ----------------------------------------------------
+// 19. Test Anti-Cursor-Jump Watcher Guard & Integrated Debug Console
+// ----------------------------------------------------
+test('19. Verify Anti-Cursor-Jump Watcher Guard & Integrated Console Debug Panel', () => {
+  const projectManagerSrc = fs.readFileSync(path.join(projectRoot, 'src/main/projectManager.js'), 'utf-8');
+  assert.ok(projectManagerSrc.includes('recentInternalWrites'), 'projectManager.js must track recentInternalWrites to suppress self-save fs.watch echoes');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('lastUserEditTime'), 'main.js must track lastUserEditTime to prevent external watcher resets during active typing');
+  assert.ok(mainJsSrc.includes('pushEditOperations'), 'main.js must use pushEditOperations instead of destructive setValue on external file updates');
+  assert.ok(mainJsSrc.includes('initConsoleControls'), 'main.js must implement initConsoleControls');
+  assert.ok(mainJsSrc.includes('appendConsoleBatch'), 'main.js must implement appendConsoleBatch');
+  assert.ok(mainJsSrc.includes('renderConsoleEntries'), 'main.js must implement renderConsoleEntries');
+
+  const sandboxRuntime = fs.readFileSync(path.join(projectRoot, 'src/main/sandboxRuntime.js'), 'utf-8');
+  assert.ok(sandboxRuntime.includes("'console:batch'"), 'sandboxRuntime.js must batch and post console:batch messages');
+  assert.ok(sandboxRuntime.includes("'console:eval'"), 'sandboxRuntime.js must handle console:eval messages');
+
+  const sandboxPreload = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(sandboxPreload.includes("'console:batch'"), 'sandboxPreload.cjs must batch and post console:batch messages');
+  assert.ok(sandboxPreload.includes("'console:eval'"), 'sandboxPreload.cjs must handle console:eval messages');
+
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="panel-console"'), 'index.html must include panel-console');
+  assert.ok(htmlSrc.includes('id="console-log-list"'), 'index.html must include console-log-list');
+  assert.ok(htmlSrc.includes('id="console-eval-input"'), 'index.html must include console-eval-input');
+  assert.ok(htmlSrc.includes('id="btn-clear-console"'), 'index.html must include btn-clear-console');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

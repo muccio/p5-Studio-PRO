@@ -47,6 +47,7 @@ export class ProjectManager extends EventEmitter {
     this.serverPort = 0;
     this.watcher = null;
     this.watchDebounceTimers = new Map();
+    this.recentInternalWrites = new Map();
     if (this.projectPath && fs.existsSync(this.projectPath)) {
       this._startWatcher();
     }
@@ -298,6 +299,13 @@ export class ProjectManager extends EventEmitter {
           return;
         }
 
+        // Ignore self-triggered fs.watch events from IDE auto-save to prevent cursor reset race condition
+        const normFilename = filename.replace(/\\/g, '/');
+        const lastWriteTs = this.recentInternalWrites.get(normFilename);
+        if (lastWriteTs && (Date.now() - lastWriteTs) < 2000) {
+          return;
+        }
+
         // Debounce to prevent duplicate editor notifications
         if (this.watchDebounceTimers.has(filename)) {
           clearTimeout(this.watchDebounceTimers.get(filename));
@@ -439,7 +447,10 @@ export class ProjectManager extends EventEmitter {
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    const normRelPath = relativePath.replace(/\\/g, '/');
+    this.recentInternalWrites.set(normRelPath, Date.now());
     fs.writeFileSync(fullPath, content, 'utf-8');
+    this.recentInternalWrites.set(normRelPath, Date.now());
     return { success: true, path: relativePath };
   }
 
