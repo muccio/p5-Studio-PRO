@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 
-import { ProjectManager } from '../src/main/projectManager.js';
+import { ProjectManager, P5_SOUND_V2_CDN_URL } from '../src/main/projectManager.js';
 import { OscBridge } from '../src/main/oscBridge.js';
 import { FfmpegExporter, EXPORT_PROFILES, decodeAudioFileToFloat32, getAudioDurationSec } from '../src/main/ffmpegExporter.js';
 
@@ -712,6 +712,72 @@ test('19. Verify Anti-Cursor-Jump Watcher Guard & Integrated Console Debug Panel
   assert.ok(htmlSrc.includes('id="console-log-list"'), 'index.html must include console-log-list');
   assert.ok(htmlSrc.includes('id="console-eval-input"'), 'index.html must include console-eval-input');
   assert.ok(htmlSrc.includes('id="btn-clear-console"'), 'index.html must include btn-clear-console');
+});
+
+// ----------------------------------------------------
+// 20. Test p5.js 2.x + p5.sound Compatibility, MIME Types & Live HTTP Upgrade
+// ----------------------------------------------------
+await asyncTest('20. Verify p5.js 2.x + p5.sound@0.4.2 Auto-Resolution, Toggle & Font MIME Types', async () => {
+  const tmpProjDir = path.join(projectRoot, '.test_p5v2_sound_proj');
+  fs.rmSync(tmpProjDir, { recursive: true, force: true });
+  fs.mkdirSync(tmpProjDir, { recursive: true });
+
+  const initialHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://unpkg.com/p5@2.3.4/lib/p5.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.2/addons/p5.sound.min.js" crossorigin="anonymous"></script>
+  <script src="./sketch.js"></script>
+</body>
+</html>`;
+  fs.writeFileSync(path.join(tmpProjDir, 'index.html'), initialHtml, 'utf-8');
+  fs.writeFileSync(path.join(tmpProjDir, 'project.json'), JSON.stringify({ p5Version: '2.3.4', libraries: ['p5.sound'] }, null, 2), 'utf-8');
+  fs.writeFileSync(path.join(tmpProjDir, 'sketch.js'), 'function setup() { createCanvas(100, 100); }', 'utf-8');
+  fs.writeFileSync(path.join(tmpProjDir, 'st.ttf'), Buffer.from([0x00, 0x01, 0x00, 0x00]));
+
+  const pm = new ProjectManager(tmpProjDir);
+  await pm.startServer(0);
+
+  try {
+    // 1. Live HTTP serve auto-upgrades legacy p5.sound 1.x when p5 2.x is loaded
+    const baseUrl = pm.getServerUrl();
+    const htmlRes = await fetch(`${baseUrl}/index.html`);
+    assert.strictEqual(htmlRes.status, 200);
+    const servedHtml = await htmlRes.text();
+    assert.ok(servedHtml.includes(P5_SOUND_V2_CDN_URL), 'Served HTML must auto-upgrade legacy p5.sound 1.x to p5.sound@0.4.2 for p5 2.x');
+    assert.ok(!servedHtml.includes('1.11.2/addons/p5.sound.min.js'), 'Served HTML must not contain incompatible p5.sound 1.x alongside p5 2.x');
+
+    // 2. Font .ttf MIME type check
+    const fontRes = await fetch(`${baseUrl}/st.ttf`);
+    assert.strictEqual(fontRes.status, 200);
+    assert.strictEqual(fontRes.headers.get('content-type'), 'font/ttf', 'Project HTTP server must serve .ttf with font/ttf Content-Type');
+
+    // 3. setP5Version switches p5.sound back and forth cleanly
+    pm.setP5Version('1.11.2');
+    const htmlV1 = fs.readFileSync(path.join(tmpProjDir, 'index.html'), 'utf-8');
+    assert.ok(htmlV1.includes('1.11.2/addons/p5.sound.min.js'), 'setP5Version(1.11.2) must switch p5.sound to 1.11.2 addon');
+
+    pm.setP5Version('2.3.4');
+    const htmlV2 = fs.readFileSync(path.join(tmpProjDir, 'index.html'), 'utf-8');
+    assert.ok(htmlV2.includes(P5_SOUND_V2_CDN_URL), 'setP5Version(2.3.4) must switch p5.sound to p5.sound@0.4.2');
+
+    // 4. toggleP5Library disables and re-enables with the compatible v2 URL
+    const libsDetected = pm.getP5Libraries();
+    assert.ok(libsDetected.enabledLibraries.includes('p5.sound'), 'getP5Libraries must detect active p5.sound v2');
+
+    pm.toggleP5Library('p5.sound', false);
+    const htmlRemoved = fs.readFileSync(path.join(tmpProjDir, 'index.html'), 'utf-8');
+    assert.ok(!htmlRemoved.includes('p5.sound'), 'toggleP5Library(p5.sound, false) must cleanly remove p5.sound script tag even with crossorigin');
+
+    pm.toggleP5Library('p5.sound', true);
+    const htmlReAdded = fs.readFileSync(path.join(tmpProjDir, 'index.html'), 'utf-8');
+    assert.ok(htmlReAdded.includes(P5_SOUND_V2_CDN_URL), 'toggleP5Library(p5.sound, true) under p5 2.3.4 must inject p5.sound@0.4.2');
+  } finally {
+    pm.stopServer();
+    fs.rmSync(tmpProjDir, { recursive: true, force: true });
+  }
 });
 
 // ----------------------------------------------------

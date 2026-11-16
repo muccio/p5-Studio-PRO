@@ -32,12 +32,50 @@ const MIME_TYPES = {
   '.glslf': 'text/plain; charset=utf-8',
   '.glslv': 'text/plain; charset=utf-8',
   '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+  '.aac': 'audio/aac',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
-  '.svg': 'image/svg+xml'
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.obj': 'text/plain; charset=utf-8',
+  '.stl': 'application/octet-stream',
+  '.wasm': 'application/wasm'
 };
+
+export const P5_SOUND_V2_CDN_URL = 'https://cdn.jsdelivr.net/npm/p5.sound@0.4.2/dist/p5.sound.min.js';
+export const P5_SOUND_V1_DEFAULT_CDN_URL = 'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.2/addons/p5.sound.min.js';
+
+function getCompatibleP5SoundUrl(p5Version) {
+  if (p5Version && String(p5Version).startsWith('2.')) {
+    return P5_SOUND_V2_CDN_URL;
+  }
+  if (p5Version && p5Version !== 'local' && /^1\./.test(String(p5Version))) {
+    return `https://cdnjs.cloudflare.com/ajax/libs/p5.js/${p5Version}/addons/p5.sound.min.js`;
+  }
+  return P5_SOUND_V1_DEFAULT_CDN_URL;
+}
+
+function isP5V2InHtml(html) {
+  return /p5@2(?:\.[0-9a-zA-Z.\-]+)?\/lib\/p5(?:\.min)?\.js/i.test(html) ||
+    /p5\.js\/2\.[0-9a-zA-Z.\-]+\/p5(?:\.min)?\.js/i.test(html);
+}
+
+const P5_SOUND_SCRIPT_SRC_REGEX = /(<script\s+[^>]*src=["'])([^"']*(?:addons\/p5\.sound(?:\.min)?\.js|p5\.sound(?:@[^/"']+)?\/dist\/p5\.sound(?:\.min)?\.js)[^"']*)(["'][^>]*><\/script>)/i;
+const P5_SOUND_FULL_TAG_LINE_REGEX = /[ \t]*<script\s+[^>]*src=["'][^"']*(?:addons\/p5\.sound(?:\.min)?\.js|p5\.sound(?:@[^/"']+)?\/dist\/p5\.sound(?:\.min)?\.js)[^"']*["'][^>]*><\/script>\r?\n?/gi;
 
 export class ProjectManager extends EventEmitter {
   constructor(initialProjectPath = null) {
@@ -272,6 +310,13 @@ export class ProjectManager extends EventEmitter {
         }
         // Ensure all external scripts have crossorigin="anonymous" to prevent browser "Script error." masking
         html = html.replace(/<script\s+src="(https:\/\/[^"]+)"(?!\s+crossorigin)>/gi, '<script src="$1" crossorigin="anonymous">');
+        // Auto-upgrade incompatible legacy p5.sound 1.x addon URL when running p5.js 2.x (prevents p5.prototype.registerMethod TypeError)
+        if (isP5V2InHtml(html) && /addons\/p5\.sound(?:\.min)?\.js/i.test(html)) {
+          html = html.replace(
+            /(<script\s+[^>]*src=["'])([^"']*addons\/p5\.sound(?:\.min)?\.js[^"']*)(["'][^>]*><\/script>)/gi,
+            `$1${P5_SOUND_V2_CDN_URL}$3`
+          );
+        }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
         return;
@@ -706,7 +751,7 @@ export class ProjectManager extends EventEmitter {
       }
 
       // Replace existing p5 script reference
-      const p5Regex = /<script\s+[^>]*src=["'][^"']*(?:p5(?:\.min)?\.js|p5@[^"']+)["'][^>]*><\/script>/i;
+      const p5Regex = /<script\s+[^>]*src=["'][^"']*(?:\/p5(?:\.min)?\.js|p5@[^"']+\/lib\/p5(?:\.min)?\.js)["'][^>]*><\/script>/i;
       if (p5Regex.test(html)) {
         html = html.replace(p5Regex, scriptTag);
       } else {
@@ -717,6 +762,13 @@ export class ProjectManager extends EventEmitter {
           html = html.replace('</head>', `  ${scriptTag}\n</head>`);
         }
       }
+
+      // Keep p5.sound addon version compatible with selected p5.js 1.x / 2.x version
+      if (P5_SOUND_SCRIPT_SRC_REGEX.test(html)) {
+        const compatibleSoundUrl = getCompatibleP5SoundUrl(version);
+        html = html.replace(P5_SOUND_SCRIPT_SRC_REGEX, `$1${compatibleSoundUrl}$3`);
+      }
+
       fs.writeFileSync(indexPath, html, 'utf-8');
     }
 
@@ -745,7 +797,13 @@ export class ProjectManager extends EventEmitter {
           const html = fs.readFileSync(indexPath, 'utf-8');
           for (const lib of P5_LIBRARIES_CATALOG) {
             if (!enabledLibraries.includes(lib.id)) {
-              if (html.includes(lib.cdnUrl) || (lib.additionalCdnUrls && lib.additionalCdnUrls.some(u => html.includes(u)))) {
+              const hasSoundMatch = lib.id === 'p5.sound' && P5_SOUND_SCRIPT_SRC_REGEX.test(html);
+              if (
+                hasSoundMatch ||
+                html.includes(lib.cdnUrl) ||
+                (lib.cdnUrlV2 && html.includes(lib.cdnUrlV2)) ||
+                (lib.additionalCdnUrls && lib.additionalCdnUrls.some(u => html.includes(u)))
+              ) {
                 enabledLibraries.push(lib.id);
               }
             }
@@ -796,27 +854,39 @@ export class ProjectManager extends EventEmitter {
     const indexPath = path.join(this.projectPath, 'index.html');
     if (fs.existsSync(indexPath)) {
       let html = fs.readFileSync(indexPath, 'utf-8');
-      const urls = [lib.cdnUrl, ...(lib.additionalCdnUrls || [])];
+      const activeVersion = this.getP5Version();
+      const primaryUrl = libId === 'p5.sound'
+        ? getCompatibleP5SoundUrl(activeVersion)
+        : lib.cdnUrl;
+      const urls = [primaryUrl, ...(lib.additionalCdnUrls || [])];
 
       if (enabled) {
-        // Add script tags if missing
-        for (const url of urls) {
-          if (!html.includes(url)) {
-            const scriptTag = `<script src="${url}" crossorigin="anonymous"></script>`;
-            if (html.includes('<script src="./sketch.js">')) {
-              html = html.replace('<script src="./sketch.js">', `${scriptTag}\n  <script src="./sketch.js">`);
-            } else if (html.includes('</body>')) {
-              html = html.replace('</body>', `  ${scriptTag}\n</body>`);
-            } else {
-              html += `\n${scriptTag}`;
+        if (libId === 'p5.sound' && P5_SOUND_SCRIPT_SRC_REGEX.test(html)) {
+          html = html.replace(P5_SOUND_SCRIPT_SRC_REGEX, `$1${primaryUrl}$3`);
+        } else {
+          // Add script tags if missing
+          for (const url of urls) {
+            if (!html.includes(url)) {
+              const scriptTag = `<script src="${url}" crossorigin="anonymous"></script>`;
+              if (html.includes('<script src="./sketch.js">')) {
+                html = html.replace('<script src="./sketch.js">', `${scriptTag}\n  <script src="./sketch.js">`);
+              } else if (html.includes('</body>')) {
+                html = html.replace('</body>', `  ${scriptTag}\n</body>`);
+              } else {
+                html += `\n${scriptTag}`;
+              }
             }
           }
         }
       } else {
         // Remove script tags
-        for (const url of urls) {
+        if (libId === 'p5.sound') {
+          html = html.replace(P5_SOUND_FULL_TAG_LINE_REGEX, '');
+        }
+        const allUrls = [lib.cdnUrl, ...(lib.cdnUrlV2 ? [lib.cdnUrlV2] : []), ...(lib.additionalCdnUrls || [])];
+        for (const url of allUrls) {
           const escaped = url.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-          const scriptRegex = new RegExp(`[ \\t]*<script\\s+src=["']${escaped}["']\\s*><\\/script>\\r?\\n?`, 'gi');
+          const scriptRegex = new RegExp(`[ \\t]*<script\\s+[^>]*src=["']${escaped}["'][^>]*><\\/script>\\r?\\n?`, 'gi');
           html = html.replace(scriptRegex, '');
         }
       }
@@ -837,8 +907,9 @@ export const P5_LIBRARIES_CATALOG = [
     id: 'p5.sound',
     name: 'p5.sound',
     category: 'Audio & Music',
-    description: 'Libreria audio ufficiale per sintesi sonora, effetti, microfono e analisi FFT.',
-    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.2/addons/p5.sound.min.js',
+    description: 'Libreria audio ufficiale per sintesi sonora, effetti, microfono e analisi FFT (compatibile p5 1.x e 2.x).',
+    cdnUrl: P5_SOUND_V1_DEFAULT_CDN_URL,
+    cdnUrlV2: P5_SOUND_V2_CDN_URL,
     website: 'https://p5js.org/reference/#/libraries/p5.sound'
   },
   {

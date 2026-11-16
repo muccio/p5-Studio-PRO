@@ -597,7 +597,8 @@ class IDEApp {
     // 4. Rebuild file tree on the left from the new project files
     await this.refreshFileTree();
 
-    // 5. Automatically open sketch.js or the first file of the new project
+    // 5. Sync p5 version dropdown & automatically open sketch.js or the first file of the new project
+    await this.syncP5VersionUI();
     if (window.electronAPI) {
       const files = await window.electronAPI.project.listFiles();
       const sketchFile = files.find(f => f.name === 'sketch.js');
@@ -1729,10 +1730,9 @@ class IDEApp {
   // =========================================================================
   // 10. p5.js Version Controls (like editor.p5js.org)
   // =========================================================================
-  async initP5VersionControls() {
+  async syncP5VersionUI() {
     const select = document.getElementById('select-p5-version');
     if (!select || !window.electronAPI || !window.electronAPI.project) return;
-
     try {
       const activeVersion = await window.electronAPI.project.getP5Version();
       if (activeVersion) {
@@ -1747,6 +1747,13 @@ class IDEApp {
     } catch (e) {
       console.warn('[p5Version] Failed to load version:', e);
     }
+  }
+
+  async initP5VersionControls() {
+    const select = document.getElementById('select-p5-version');
+    if (!select || !window.electronAPI || !window.electronAPI.project) return;
+
+    await this.syncP5VersionUI();
 
     select.addEventListener('change', async () => {
       const selected = select.value;
