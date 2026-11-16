@@ -300,6 +300,14 @@
       this.peakHoldFreq = new Float32Array(1024);
 
       this.currentRMS = 0;
+      this.bandRanges = {
+        sub: [20, 60],
+        bass: [60, 250],
+        lowMid: [250, 500],
+        mid: [500, 2000],
+        highMid: [2000, 4000],
+        treble: [4000, 20000]
+      };
       this.bands = { sub: 0, bass: 0, lowMid: 0, mid: 0, highMid: 0, treble: 0 };
       this.lastBeatTime = 0;
       this.p5AudioTexture = null;
@@ -479,12 +487,13 @@
         this.currentRMS = Math.sqrt(sumSquares / this.fftSize);
 
         const binHz = (this.sampleRate / 2) / (this.fftSize / 2);
-        this.bands.sub = this._calcBandLive(20, 60, binHz);
-        this.bands.bass = this._calcBandLive(60, 250, binHz);
-        this.bands.lowMid = this._calcBandLive(250, 500, binHz);
-        this.bands.mid = this._calcBandLive(500, 2000, binHz);
-        this.bands.highMid = this._calcBandLive(2000, 4000, binHz);
-        this.bands.treble = this._calcBandLive(4000, 20000, binHz);
+        const r = this.bandRanges;
+        this.bands.sub = this._calcBandLive(r.sub[0], r.sub[1], binHz);
+        this.bands.bass = this._calcBandLive(r.bass[0], r.bass[1], binHz);
+        this.bands.lowMid = this._calcBandLive(r.lowMid[0], r.lowMid[1], binHz);
+        this.bands.mid = this._calcBandLive(r.mid[0], r.mid[1], binHz);
+        this.bands.highMid = this._calcBandLive(r.highMid[0], r.highMid[1], binHz);
+        this.bands.treble = this._calcBandLive(r.treble[0], r.treble[1], binHz);
       } else {
         const t = performance.now() / 1000;
         const beat = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2)), 4);
@@ -537,6 +546,24 @@
         const rawSample = (i < this.fftSize) ? slice[i] : 0.0;
         this.liveTimeData[i] = Math.max(0, Math.min(255, Math.floor((rawSample + 1.0) * 127.5)));
       }
+    }
+
+    setBandRanges(ranges) {
+      if (!ranges || typeof ranges !== 'object') return this.bandRanges;
+      const keys = ['sub', 'bass', 'lowMid', 'mid', 'highMid', 'treble'];
+      for (const k of keys) {
+        const pair = ranges[k];
+        if (Array.isArray(pair) && pair.length >= 2) {
+          const lo = Math.max(0, Math.min(24000, Number(pair[0]) || 0));
+          const hi = Math.max(lo + 1, Math.min(24000, Number(pair[1]) || (lo + 1)));
+          this.bandRanges[k] = [lo, hi];
+        }
+      }
+      return this.bandRanges;
+    }
+
+    getBandRanges() {
+      return JSON.parse(JSON.stringify(this.bandRanges));
     }
 
     getRMS() { return this.currentRMS; }
@@ -993,6 +1020,8 @@
       if (window.ideAudio) window.ideAudio.setGain(data.gain);
     } else if (data.type === 'audio:setDevice' && typeof data.deviceId === 'string') {
       if (window.ideAudio) window.ideAudio.setDevice(data.deviceId);
+    } else if (data.type === 'audio:setBandRanges' && data.ranges) {
+      if (window.ideAudio) window.ideAudio.setBandRanges(data.ranges);
     } else if (data.type === 'audio:resume') {
       if (window.ideAudio && window.ideAudio.audioCtx && window.ideAudio.audioCtx.state === 'suspended') {
         window.ideAudio.audioCtx.resume().catch(() => {});

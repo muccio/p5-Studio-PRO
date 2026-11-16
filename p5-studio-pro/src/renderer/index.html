@@ -139,6 +139,12 @@
           <span>Reference p5</span>
         </button>
 
+        <!-- Floating AI Chatbot Browser Trigger -->
+        <button id="btn-open-chatbot" class="btn btn-secondary btn-chatbot-trigger" title="Apri finestra browser flottante (Always On Top) per caricare un chatbot AI e fargli modificare il codice">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-9 9H7V9h4v2zm6 0h-4V9h4v2z"/></svg>
+          <span>AI Browser</span>
+        </button>
+
         <div class="divider-vertical"></div>
 
         <!-- Video Export Modal Trigger -->
@@ -336,29 +342,95 @@
 
           <!-- Real-time Band Meters -->
           <div class="band-meters-grid">
-            <div class="band-meter">
+            <div class="band-meter" data-band="sub">
               <div class="meter-bar-track"><div id="meter-sub" class="meter-bar-fill"></div></div>
               <span class="meter-name">SUB</span>
+              <span class="meter-hz-label" id="label-hz-sub" title="Clicca per modificare l'intervallo Hz">20-60</span>
             </div>
-            <div class="band-meter">
+            <div class="band-meter" data-band="bass">
               <div class="meter-bar-track"><div id="meter-bass" class="meter-bar-fill"></div></div>
               <span class="meter-name">BASS</span>
+              <span class="meter-hz-label" id="label-hz-bass" title="Clicca per modificare l'intervallo Hz">60-250</span>
             </div>
-            <div class="band-meter">
+            <div class="band-meter" data-band="lowMid">
               <div class="meter-bar-track"><div id="meter-lowmid" class="meter-bar-fill"></div></div>
               <span class="meter-name">L-MID</span>
+              <span class="meter-hz-label" id="label-hz-lowMid" title="Clicca per modificare l'intervallo Hz">250-500</span>
             </div>
-            <div class="band-meter">
+            <div class="band-meter" data-band="mid">
               <div class="meter-bar-track"><div id="meter-mid" class="meter-bar-fill"></div></div>
               <span class="meter-name">MID</span>
+              <span class="meter-hz-label" id="label-hz-mid" title="Clicca per modificare l'intervallo Hz">500-2k</span>
             </div>
-            <div class="band-meter">
+            <div class="band-meter" data-band="highMid">
               <div class="meter-bar-track"><div id="meter-highmid" class="meter-bar-fill"></div></div>
               <span class="meter-name">H-MID</span>
+              <span class="meter-hz-label" id="label-hz-highMid" title="Clicca per modificare l'intervallo Hz">2k-4k</span>
             </div>
-            <div class="band-meter">
+            <div class="band-meter" data-band="treble">
               <div class="meter-bar-track"><div id="meter-treble" class="meter-bar-fill"></div></div>
               <span class="meter-name">TREB</span>
+              <span class="meter-hz-label" id="label-hz-treble" title="Clicca per modificare l'intervallo Hz">4k-20k</span>
+            </div>
+          </div>
+
+          <!-- Frequency Band Ranges Configurator -->
+          <div class="freq-ranges-section" id="freq-ranges-panel">
+            <div class="freq-ranges-toolbar">
+              <button type="button" id="btn-toggle-freq-ranges" class="btn-freq-toggle" title="Mostra/nascondi configuratore intervalli di frequenza in Hz">
+                <span>⚙ Intervalli Frequenza (Hz)</span>
+                <span class="freq-chevron" id="freq-ranges-chevron">▾</span>
+              </button>
+              <div class="freq-ranges-actions">
+                <select id="select-freq-preset" class="dropdown dropdown-freq-preset" title="Preset intervalli di frequenza">
+                  <option value="default">Default</option>
+                  <option value="kick">Kick / Sub</option>
+                  <option value="vocal">Vocal / Mid</option>
+                  <option value="wide">Live / Wide</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <button type="button" id="btn-reset-freq-ranges" class="btn-gain-preset" title="Ripristina intervalli Hz predefiniti">Reset</button>
+              </div>
+            </div>
+            <div id="freq-ranges-body" class="freq-ranges-body hidden">
+              <div class="freq-ranges-grid">
+                <div class="freq-band-row">
+                  <span class="freq-band-tag">SUB</span>
+                  <input type="number" id="freq-sub-min" class="freq-hz-input" min="0" max="24000" step="5" value="20" title="SUB Min Hz">
+                  <span class="freq-sep">–</span>
+                  <input type="number" id="freq-sub-max" class="freq-hz-input" min="1" max="24000" step="5" value="60" title="SUB Max Hz">
+                </div>
+                <div class="freq-band-row">
+                  <span class="freq-band-tag">BASS</span>
+                  <input type="number" id="freq-bass-min" class="freq-hz-input" min="0" max="24000" step="10" value="60" title="BASS Min Hz">
+                  <span class="freq-sep">–</span>
+                  <input type="number" id="freq-bass-max" class="freq-hz-input" min="1" max="24000" step="10" value="250" title="BASS Max Hz">
+                </div>
+                <div class="freq-band-row">
+                  <span class="freq-band-tag">L-MID</span>
+                  <input type="number" id="freq-lowMid-min" class="freq-hz-input" min="0" max="24000" step="10" value="250" title="L-MID Min Hz">
+                  <span class="freq-sep">–</span>
+                  <input type="number" id="freq-lowMid-max" class="freq-hz-input" min="1" max="24000" step="10" value="500" title="L-MID Max Hz">
+                </div>
+                <div class="freq-band-row">
+                  <span class="freq-band-tag">MID</span>
+                  <input type="number" id="freq-mid-min" class="freq-hz-input" min="0" max="24000" step="50" value="500" title="MID Min Hz">
+                  <span class="freq-sep">–</span>
+                  <input type="number" id="freq-mid-max" class="freq-hz-input" min="1" max="24000" step="50" value="2000" title="MID Max Hz">
+                </div>
+                <div class="freq-band-row">
+                  <span class="freq-band-tag">H-MID</span>
+                  <input type="number" id="freq-highMid-min" class="freq-hz-input" min="0" max="24000" step="50" value="2000" title="H-MID Min Hz">
+                  <span class="freq-sep">–</span>
+                  <input type="number" id="freq-highMid-max" class="freq-hz-input" min="1" max="24000" step="50" value="4000" title="H-MID Max Hz">
+                </div>
+                <div class="freq-band-row">
+                  <span class="freq-band-tag">TREB</span>
+                  <input type="number" id="freq-treble-min" class="freq-hz-input" min="0" max="24000" step="100" value="4000" title="TREB Min Hz">
+                  <span class="freq-sep">–</span>
+                  <input type="number" id="freq-treble-max" class="freq-hz-input" min="1" max="24000" step="100" value="20000" title="TREB Max Hz">
+                </div>
+              </div>
             </div>
           </div>
         </div>

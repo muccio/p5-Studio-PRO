@@ -57,10 +57,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
-  // --- Audio Take Recorder ---
+  // --- Audio Take Recorder & Analysis Config ---
   audio: {
     saveTakeWav: (takeDir, channelData, sampleRate) =>
-      ipcRenderer.invoke('audio:saveTakeWav', { takeDir, channelData, sampleRate })
+      ipcRenderer.invoke('audio:saveTakeWav', { takeDir, channelData, sampleRate }),
+    setBandRanges: (ranges) => ipcRenderer.invoke('audio:setBandRanges', ranges)
+  },
+
+  // --- Floating AI Chatbot Browser ---
+  chatbot: {
+    open: (options) => ipcRenderer.invoke('chatbot:open', options),
+    close: () => ipcRenderer.invoke('chatbot:close'),
+    toggle: (options) => ipcRenderer.invoke('chatbot:toggle', options),
+    getStatus: () => ipcRenderer.invoke('chatbot:getStatus'),
+    setAlwaysOnTop: (flag) => ipcRenderer.invoke('chatbot:setAlwaysOnTop', flag),
+    toggleAlwaysOnTop: () => ipcRenderer.invoke('chatbot:toggleAlwaysOnTop'),
+    notifyActiveFile: (activeFile) => ipcRenderer.invoke('chatbot:notifyActiveFile', activeFile),
+    onStatusChanged: (callback) => {
+      const listener = (event, data) => callback(data);
+      ipcRenderer.on('chatbot:statusChanged', listener);
+      return () => ipcRenderer.removeListener('chatbot:statusChanged', listener);
+    }
   },
 
   // --- Deterministic Video Export ---

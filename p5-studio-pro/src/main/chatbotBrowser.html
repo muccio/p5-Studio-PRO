@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>p5-Studio-PRO - AI Chatbot Browser</title>
+  <style>
+    :root {
+      --bg-dark: #0d0f14;
+      --bg-bar: #151821;
+      --bg-input: #0a0c10;
+      --border: #252b3b;
+      --text: #e2e8f0;
+      --text-muted: #8b95a5;
+      --accent-cyan: #00f0ff;
+      --accent-amber: #ffb700;
+      --accent-green: #10b981;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: var(--bg-dark);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .nav-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      background: var(--bg-bar);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .bridge-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 5px 10px;
+      background: #10131b;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .bridge-left, .bridge-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 9px;
+      font-size: 11.5px;
+      font-weight: 600;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: #1c202c;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+    .btn:hover { background: #262c3d; border-color: #3a435a; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-icon { padding: 5px 7px; font-size: 13px; line-height: 1; }
+    .btn-pin.active {
+      background: rgba(0, 240, 255, 0.16);
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+      box-shadow: 0 0 8px rgba(0, 240, 255, 0.25);
+    }
+    .btn-primary {
+      background: rgba(0, 240, 255, 0.14);
+      border-color: rgba(0, 240, 255, 0.45);
+      color: var(--accent-cyan);
+    }
+    .btn-primary:hover { background: rgba(0, 240, 255, 0.24); }
+    .btn-apply {
+      background: rgba(16, 185, 129, 0.14);
+      border-color: rgba(16, 185, 129, 0.45);
+      color: #34d399;
+    }
+    .btn-apply:hover { background: rgba(16, 185, 129, 0.24); }
+    .select-preset {
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 5px 7px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+    }
+    .url-input {
+      flex: 1;
+      min-width: 120px;
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 5px 9px;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      outline: none;
+    }
+    .url-input:focus { border-color: var(--accent-cyan); }
+    .file-pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      color: var(--accent-amber);
+      background: rgba(255, 183, 0, 0.1);
+      border: 1px solid rgba(255, 183, 0, 0.3);
+      border-radius: 4px;
+      padding: 3px 7px;
+    }
+    .webview-wrap {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      min-height: 0;
+      background: #0d0f14;
+    }
+    webview {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: flex;
+    }
+    .status-toast {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #141925;
+      color: var(--text);
+      border: 1px solid var(--accent-cyan);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.2s ease;
+      z-index: 999;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    }
+    .status-toast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .loading-line {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 2px;
+      width: 0%;
+      background: var(--accent-cyan);
+      transition: width 0.2s ease, opacity 0.2s ease;
+      opacity: 0;
+      z-index: 20;
+    }
+    .loading-line.active {
+      width: 85%;
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="nav-bar">
+    <button id="btn-back" class="btn btn-icon" title="Indietro">←</button>
+    <button id="btn-forward" class="btn btn-icon" title="Avanti">→</button>
+    <button id="btn-reload" class="btn btn-icon" title="Ricarica pagina">↻</button>
+
+    <select id="select-chatbot-preset" class="select-preset" title="Scegli un chatbot o sito">
+      <option value="https://chatgpt.com">ChatGPT</option>
+      <option value="https://claude.ai">Claude</option>
+      <option value="https://gemini.google.com">Gemini</option>
+      <option value="https://chat.deepseek.com">DeepSeek</option>
+      <option value="https://www.perplexity.ai">Perplexity</option>
+      <option value="https://aistudio.google.com">Google AI Studio</option>
+      <option value="https://p5js.org/reference/">p5.js Reference</option>
+      <option value="custom">URL Personalizzato</option>
+    </select>
+
+    <input id="input-url" class="url-input" type="text" placeholder="https://chatgpt.com" />
+    <button id="btn-go" class="btn">Vai</button>
+
+    <button id="btn-always-on-top" class="btn btn-pin active" title="Mantieni questa finestra sempre in primo piano sopra l'IDE">
+      <span>📌</span>
+      <span id="label-pin">Primo Piano</span>
+    </button>
+  </div>
+
+  <div class="bridge-bar">
+    <div class="bridge-left">
+      <span class="file-pill" id="badge-active-file">sketch.js</span>
+      <button id="btn-copy-code" class="btn btn-primary" title="Copia il codice del file attivo nell'IDE negli appunti pronto da incollare nel chatbot">
+        📋 Copia Codice IDE
+      </button>
+      <button id="btn-copy-with-errors" class="btn" title="Copia codice del file attivo + ultimi errori/log dalla console IDE">
+        🐞 + Console
+      </button>
+    </div>
+    <div class="bridge-right">
+      <button id="btn-extract-apply" class="btn btn-apply" title="Estrae l'ultimo blocco di codice generato dal chatbot nella pagina e lo applica al file attivo nell'IDE">
+        ✨ Applica Ultimo Codice
+      </button>
+      <button id="btn-paste-apply" class="btn btn-apply" title="Applica il codice copiato negli appunti direttamente nel file attivo nell'IDE (con Cmd/Ctrl+Z per annullare)">
+        📥 Appunti → IDE
+      </button>
+    </div>
+  </div>
+
+  <div class="webview-wrap">
+    <div id="loading-line" class="loading-line"></div>
+    <webview
+      id="chatbot-webview"
+      partition="persist:chatbot"
+      allowpopups
+      src="https://chatgpt.com"
+    ></webview>
+  </div>
+
+  <div id="status-toast" class="status-toast"></div>
+
+  <script>
+    const webview = document.getElementById('chatbot-webview');
+    const urlInput = document.getElementById('input-url');
+    const presetSelect = document.getElementById('select-chatbot-preset');
+    const btnBack = document.getElementById('btn-back');
+    const btnForward = document.getElementById('btn-forward');
+    const btnReload = document.getElementById('btn-reload');
+    const btnGo = document.getElementById('btn-go');
+    const btnPin = document.getElementById('btn-always-on-top');
+    const loadingLine = document.getElementById('loading-line');
+    const toast = document.getElementById('status-toast');
+    const badgeActiveFile = document.getElementById('badge-active-file');
+
+    let toastTimer = null;
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('visible');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('visible'), 2600);
+    }
+
+    function normalizeUrl(raw) {
+      let val = (raw || '').trim();
+      if (!val) return 'https://chatgpt.com';
+      if (!/^https?:\/\//i.test(val)) {
+        if (/^(localhost|127\.0\.0\.1)(:\d+)?/i.test(val)) {
+          val = `http://${val}`;
+        } else {
+          val = `https://${val}`;
+        }
+      }
+      return val;
+    }
+
+    function syncPresetSelection(currentUrl) {
+      const opts = Array.from(presetSelect.options).map(o => o.value).filter(v => v !== 'custom');
+      const matched = opts.find(prefix => currentUrl && currentUrl.startsWith(prefix));
+      presetSelect.value = matched || 'custom';
+    }
+
+    function navigateTo(rawUrl) {
+      const target = normalizeUrl(rawUrl);
+      urlInput.value = target;
+      syncPresetSelection(target);
+      try {
+        localStorage.setItem('p5_studio_chatbot_last_url', target);
+      } catch (e) {}
+      webview.loadURL(target);
+    }
+
+    // Restore last URL
+    try {
+      const savedUrl = localStorage.getItem('p5_studio_chatbot_last_url');
+      if (savedUrl) {
+        urlInput.value = savedUrl;
+        webview.setAttribute('src', savedUrl);
+        syncPresetSelection(savedUrl);
+      } else {
+        urlInput.value = 'https://chatgpt.com';
+      }
+    } catch (e) {
+      urlInput.value = 'https://chatgpt.com';
+    }
+
+    btnBack.addEventListener('click', () => { if (webview.canGoBack()) webview.goBack(); });
+    btnForward.addEventListener('click', () => { if (webview.canGoForward()) webview.goForward(); });
+    btnReload.addEventListener('click', () => webview.reload());
+    btnGo.addEventListener('click', () => navigateTo(urlInput.value));
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        navigateTo(urlInput.value);
+      }
+    });
+    presetSelect.addEventListener('change', () => {
+      if (presetSelect.value !== 'custom') {
+        navigateTo(presetSelect.value);
+      } else {
+        urlInput.focus();
+        urlInput.select();
+      }
+    });
+
+    webview.addEventListener('did-start-loading', () => {
+      loadingLine.classList.add('active');
+    });
+    webview.addEventListener('did-stop-loading', () => {
+      loadingLine.classList.remove('active');
+      const current = webview.getURL();
+      if (current) {
+        urlInput.value = current;
+        syncPresetSelection(current);
+        try {
+          localStorage.setItem('p5_studio_chatbot_last_url', current);
+        } catch (e) {}
+      }
+    });
+    webview.addEventListener('did-navigate', (e) => {
+      if (e.url) {
+        urlInput.value = e.url;
+        syncPresetSelection(e.url);
+      }
+    });
+
+    // Always On Top toggle
+    function syncPinUI(isPinned) {
+      btnPin.classList.toggle('active', !!isPinned);
+      btnPin.title = isPinned
+        ? 'Finestra sempre in primo piano (clicca per disattivare)'
+        : 'Finestra normale (clicca per mantenere sempre in primo piano)';
+    }
+
+    if (window.chatbotAPI) {
+      window.chatbotAPI.getStatus().then((st) => {
+        if (st) {
+          syncPinUI(st.isAlwaysOnTop);
+          if (st.activeFile) badgeActiveFile.textContent = st.activeFile;
+        }
+      });
+
+      window.chatbotAPI.onStatusChanged((st) => {
+        if (st) syncPinUI(st.isAlwaysOnTop);
+      });
+
+      window.chatbotAPI.onActiveFileChanged((info) => {
+        if (info && info.activeFile) {
+          badgeActiveFile.textContent = info.activeFile;
+        }
+      });
+
+      btnPin.addEventListener('click', async () => {
+        const nextState = await window.chatbotAPI.toggleAlwaysOnTop();
+        syncPinUI(nextState);
+        try {
+          localStorage.setItem('p5_studio_chatbot_always_on_top', nextState ? 'true' : 'false');
+        } catch (e) {}
+        showToast(nextState ? '📌 Sempre in primo piano ATTIVO' : '📌 Sempre in primo piano disattivato');
+      });
+
+      document.getElementById('btn-copy-code').addEventListener('click', async () => {
+        const data = await window.chatbotAPI.getActiveCode();
+        if (!data || !data.code) {
+          showToast('Nessun file aperto nell\'IDE');
+          return;
+        }
+        badgeActiveFile.textContent = data.filePath || 'sketch.js';
+        const ext = (data.filePath || 'js').split('.').pop();
+        const promptText = `File attuale \`${data.filePath}\` (p5.js ${data.p5Version || ''}):\n\n\`\`\`${ext}\n${data.code}\n\`\`\`\n\nModifica questo codice e restituisci il file completo aggiornato in un unico blocco di codice.`;
+        window.chatbotAPI.writeClipboard(promptText);
+        showToast(`📋 Copiato ${data.filePath} pronto per il chatbot!`);
+      });
+
+      document.getElementById('btn-copy-with-errors').addEventListener('click', async () => {
+        const data = await window.chatbotAPI.getActiveCode();
+        if (!data || !data.code) {
+          showToast('Nessun file aperto nell\'IDE');
+          return;
+        }
+        badgeActiveFile.textContent = data.filePath || 'sketch.js';
+        const ext = (data.filePath || 'js').split('.').pop();
+        const consoleText = (data.recentErrors && data.recentErrors.length > 0)
+          ? `\n\nErrori / Log Console recenti:\n\`\`\`\n${data.recentErrors.join('\n')}\n\`\`\``
+          : '\n\n(Nessun errore recente in console)';
+        const promptText = `File attuale \`${data.filePath}\` (p5.js ${data.p5Version || ''}):\n\n\`\`\`${ext}\n${data.code}\n\`\`\`${consoleText}\n\nCorreggi o modifica il codice e restituisci il file completo aggiornato.`;
+        window.chatbotAPI.writeClipboard(promptText);
+        showToast(`🐞 Copiato ${data.filePath} + console negli appunti!`);
+      });
+
+      document.getElementById('btn-extract-apply').addEventListener('click', async () => {
+        try {
+          const extracted = await webview.executeJavaScript(`(() => {
+            const blocks = Array.from(document.querySelectorAll('pre code, pre'));
+            const candidates = blocks
+              .map(el => (el.innerText || el.textContent || '').trim())
+              .filter(txt => txt.length > 10);
+            return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+          })()`);
+          if (!extracted) {
+            showToast('Nessun blocco di codice trovato nella pagina — usa "Appunti → IDE" dopo aver copiato');
+            return;
+          }
+          const res = await window.chatbotAPI.applyCode(extracted, 'replace');
+          if (res && res.success) {
+            showToast(`✨ Applicato a ${res.filePath || 'editor'} (Cmd/Ctrl+Z per annullare)`);
+          } else {
+            showToast('Impossibile applicare il codice nell\'editor');
+          }
+        } catch (err) {
+          console.error('[Chatbot] Extract code error:', err);
+          showToast('Usa il tasto Copia del chatbot e clicca "Appunti → IDE"');
+        }
+      });
+
+      document.getElementById('btn-paste-apply').addEventListener('click', async () => {
+        let text = window.chatbotAPI.readClipboard() || '';
+        if (!text.trim()) {
+          showToast('Appunti vuoti! Copia prima il codice generato dal chatbot');
+          return;
+        }
+        // Strip markdown triple backticks if user copied a fenced code block
+        const fenceMatch = text.trim().match(/^```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n```$/);
+        if (fenceMatch) {
+          text = fenceMatch[1];
+        }
+        const res = await window.chatbotAPI.applyCode(text, 'replace');
+        if (res && res.success) {
+          showToast(`📥 Applicato da appunti a ${res.filePath || 'editor'} (Cmd/Ctrl+Z per annullare)`);
+        } else {
+          showToast('Apri un file nell\'editor IDE prima di applicare');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

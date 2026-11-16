@@ -781,6 +781,55 @@ await asyncTest('20. Verify p5.js 2.x + p5.sound@0.4.2 Auto-Resolution, Toggle &
 });
 
 // ----------------------------------------------------
+// 21. Test Editable Frequency Band Ranges & Floating AI Chatbot Browser (Always On Top)
+// ----------------------------------------------------
+test('21. Verify Configurable Audio Frequency Band Ranges & Floating AI Chatbot Browser', () => {
+  // 21.1 Frequency Band Ranges
+  const sandboxRuntime = fs.readFileSync(path.join(projectRoot, 'src/main/sandboxRuntime.js'), 'utf-8');
+  assert.ok(sandboxRuntime.includes('setBandRanges('), 'sandboxRuntime.js must implement setBandRanges');
+  assert.ok(sandboxRuntime.includes("'audio:setBandRanges'"), 'sandboxRuntime.js must listen for audio:setBandRanges');
+
+  const sandboxPreload = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(sandboxPreload.includes('setBandRanges('), 'sandboxPreload.cjs must implement setBandRanges');
+  assert.ok(sandboxPreload.includes("'audio:setBandRanges'"), 'sandboxPreload.cjs must listen for audio:setBandRanges');
+
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="btn-toggle-freq-ranges"'), 'index.html must include btn-toggle-freq-ranges');
+  assert.ok(htmlSrc.includes('id="freq-sub-min"'), 'index.html must include freq-sub-min input');
+  assert.ok(htmlSrc.includes('id="freq-treble-max"'), 'index.html must include freq-treble-max input');
+  assert.ok(htmlSrc.includes('id="select-freq-preset"'), 'index.html must include select-freq-preset');
+  assert.ok(htmlSrc.includes('id="btn-open-chatbot"'), 'index.html must include btn-open-chatbot');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('initAudioBandRangesControls'), 'main.js must implement initAudioBandRangesControls');
+  assert.ok(mainJsSrc.includes('sendAudioBandRangesToPreview'), 'main.js must implement sendAudioBandRangesToPreview');
+  assert.ok(mainJsSrc.includes('p5_studio_audio_band_ranges'), 'main.js must persist p5_studio_audio_band_ranges');
+  assert.ok(mainJsSrc.includes('initChatbotBrowserControls'), 'main.js must implement initChatbotBrowserControls');
+  assert.ok(mainJsSrc.includes('__ideApplyChatbotCode'), 'main.js must expose __ideApplyChatbotCode');
+
+  // 21.2 Floating AI Chatbot Browser & Always On Top
+  const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainIndexSrc.includes('openChatbotWindow'), 'main/index.js must implement openChatbotWindow');
+  assert.ok(mainIndexSrc.includes("'chatbot:toggleAlwaysOnTop'"), 'main/index.js must handle chatbot:toggleAlwaysOnTop');
+  assert.ok(mainIndexSrc.includes("'chatbot:applyCode'"), 'main/index.js must handle chatbot:applyCode');
+  assert.ok(mainIndexSrc.includes("'audio:setBandRanges'"), 'main/index.js must handle audio:setBandRanges');
+
+  const chatbotPreloadPath = path.join(projectRoot, 'src/preload/chatbotPreload.cjs');
+  assert.ok(fs.existsSync(chatbotPreloadPath), 'chatbotPreload.cjs must exist');
+  const chatbotHtmlPath = path.join(projectRoot, 'src/main/chatbotBrowser.html');
+  assert.ok(fs.existsSync(chatbotHtmlPath), 'chatbotBrowser.html must exist');
+  const chatbotHtml = fs.readFileSync(chatbotHtmlPath, 'utf-8');
+  assert.ok(chatbotHtml.includes('btn-always-on-top'), 'chatbotBrowser.html must include btn-always-on-top toggle');
+  assert.ok(chatbotHtml.includes('<webview'), 'chatbotBrowser.html must embed Chromium webview for external chatbots');
+  assert.ok(chatbotHtml.includes('btn-extract-apply'), 'chatbotBrowser.html must include btn-extract-apply');
+  assert.ok(chatbotHtml.includes('btn-copy-code'), 'chatbotBrowser.html must include btn-copy-code');
+
+  const idePreloadCjs = fs.readFileSync(path.join(projectRoot, 'src/preload/idePreload.cjs'), 'utf-8');
+  assert.ok(idePreloadCjs.includes('chatbot:'), 'idePreload.cjs must expose chatbot API');
+  assert.ok(idePreloadCjs.includes('setBandRanges:'), 'idePreload.cjs must expose audio.setBandRanges');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

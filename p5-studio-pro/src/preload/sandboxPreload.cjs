@@ -1138,6 +1138,20 @@ class IdeAudioEngine {
 
     // Metrics
     this.currentRMS = 0;
+    this.bandRanges = {
+      sub: [20, 60],
+      bass: [60, 250],
+      lowMid: [250, 500],
+      mid: [500, 2000],
+      highMid: [2000, 4000],
+      treble: [4000, 20000]
+    };
+    try {
+      const bandParam = urlParams.get('bandRanges');
+      if (bandParam) {
+        this.setBandRanges(JSON.parse(bandParam));
+      }
+    } catch (e) {}
     this.bands = {
       sub: 0,
       bass: 0,
@@ -1395,14 +1409,15 @@ class IdeAudioEngine {
       }
       this.currentRMS = Math.sqrt(sumSquares / this.fftSize);
 
-      // Compute standard frequency bands (0..1)
+      // Compute configured frequency bands (0..1)
       const binHz = (this.sampleRate / 2) / (this.fftSize / 2);
-      this.bands.sub = this._calcBandLive(20, 60, binHz);
-      this.bands.bass = this._calcBandLive(60, 250, binHz);
-      this.bands.lowMid = this._calcBandLive(250, 500, binHz);
-      this.bands.mid = this._calcBandLive(500, 2000, binHz);
-      this.bands.highMid = this._calcBandLive(2000, 4000, binHz);
-      this.bands.treble = this._calcBandLive(4000, 20000, binHz);
+      const r = this.bandRanges;
+      this.bands.sub = this._calcBandLive(r.sub[0], r.sub[1], binHz);
+      this.bands.bass = this._calcBandLive(r.bass[0], r.bass[1], binHz);
+      this.bands.lowMid = this._calcBandLive(r.lowMid[0], r.lowMid[1], binHz);
+      this.bands.mid = this._calcBandLive(r.mid[0], r.mid[1], binHz);
+      this.bands.highMid = this._calcBandLive(r.highMid[0], r.highMid[1], binHz);
+      this.bands.treble = this._calcBandLive(r.treble[0], r.treble[1], binHz);
     } else {
       // Synthetic fallback generator for preview when mic is disabled
       const t = performance.now() / 1000;
@@ -1471,12 +1486,31 @@ class IdeAudioEngine {
 
     // Compute normalized frequency bands (0..1) directly from liveFreqData so live and offline match 1:1
     const binHz = (this.sampleRate / 2) / 1024;
-    this.bands.sub = this._calcBandLive(20, 60, binHz);
-    this.bands.bass = this._calcBandLive(60, 250, binHz);
-    this.bands.lowMid = this._calcBandLive(250, 500, binHz);
-    this.bands.mid = this._calcBandLive(500, 2000, binHz);
-    this.bands.highMid = this._calcBandLive(2000, 4000, binHz);
-    this.bands.treble = this._calcBandLive(4000, 20000, binHz);
+    const r = this.bandRanges;
+    this.bands.sub = this._calcBandLive(r.sub[0], r.sub[1], binHz);
+    this.bands.bass = this._calcBandLive(r.bass[0], r.bass[1], binHz);
+    this.bands.lowMid = this._calcBandLive(r.lowMid[0], r.lowMid[1], binHz);
+    this.bands.mid = this._calcBandLive(r.mid[0], r.mid[1], binHz);
+    this.bands.highMid = this._calcBandLive(r.highMid[0], r.highMid[1], binHz);
+    this.bands.treble = this._calcBandLive(r.treble[0], r.treble[1], binHz);
+  }
+
+  setBandRanges(ranges) {
+    if (!ranges || typeof ranges !== 'object') return this.bandRanges;
+    const keys = ['sub', 'bass', 'lowMid', 'mid', 'highMid', 'treble'];
+    for (const k of keys) {
+      const pair = ranges[k];
+      if (Array.isArray(pair) && pair.length >= 2) {
+        const lo = Math.max(0, Math.min(24000, Number(pair[0]) || 0));
+        const hi = Math.max(lo + 1, Math.min(24000, Number(pair[1]) || (lo + 1)));
+        this.bandRanges[k] = [lo, hi];
+      }
+    }
+    return this.bandRanges;
+  }
+
+  getBandRanges() {
+    return JSON.parse(JSON.stringify(this.bandRanges));
   }
 
   _calcBandOffline(lowHz, highHz, binHz) {
@@ -1565,10 +1599,19 @@ class IdeOscEngine {
     this.recordedEvents = [];
     this.playbackIndex = 0;
 
-    // Listen for live OSC messages from main process
+    // Listen for live OSC & audio config messages from main process
     if (ipcRenderer) {
       ipcRenderer.on('osc:message', (event, msg) => {
         this._dispatch(msg.address, msg.args);
+      });
+      ipcRenderer.on('audio:setBandRanges', (event, ranges) => {
+        if (window.ideAudio) window.ideAudio.setBandRanges(ranges);
+      });
+      ipcRenderer.on('audio:setGain', (event, gain) => {
+        if (window.ideAudio) window.ideAudio.setGain(gain);
+      });
+      ipcRenderer.on('audio:setDevice', (event, deviceId) => {
+        if (window.ideAudio) window.ideAudio.setDevice(deviceId);
       });
     }
 
@@ -1582,6 +1625,8 @@ class IdeOscEngine {
         if (window.ideAudio) window.ideAudio.setGain(data.gain);
       } else if (data.type === 'audio:setDevice' && typeof data.deviceId === 'string') {
         if (window.ideAudio) window.ideAudio.setDevice(data.deviceId);
+      } else if (data.type === 'audio:setBandRanges' && data.ranges) {
+        if (window.ideAudio) window.ideAudio.setBandRanges(data.ranges);
       } else if (data.type === 'audio:resume') {
         if (window.ideAudio && window.ideAudio.audioCtx && window.ideAudio.audioCtx.state === 'suspended') {
           window.ideAudio.audioCtx.resume().catch(() => {});

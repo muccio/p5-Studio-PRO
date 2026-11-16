@@ -23,9 +23,11 @@ let mainWindow = null;
 let exportWindow = null;
 let liveWindow = null;
 let previewWindow = null;
+let chatbotWindow = null;
 let projectManager = null;
 let oscBridge = null;
 let ffmpegExporter = null;
+let activeAudioBandRanges = null;
 
 function getProdPath() {
   const candidates = [
@@ -244,6 +246,7 @@ async function createMainWindow() {
     mainWindow = null;
     if (liveWindow && !liveWindow.isDestroyed()) liveWindow.close();
     if (previewWindow && !previewWindow.isDestroyed()) previewWindow.close();
+    if (chatbotWindow && !chatbotWindow.isDestroyed()) chatbotWindow.close();
   });
 }
 
@@ -316,7 +319,8 @@ async function openLiveWindow(options = {}) {
   // Commit/snapshot current project to live buffer before opening Live Stage window
   projectManager.commitToLiveBuffer();
 
-  const liveUrl = `${projectManager.getServerUrl()}/__live/index.html?live=true&t=${Date.now()}`;
+  const bandParam = activeAudioBandRanges ? `&bandRanges=${encodeURIComponent(JSON.stringify(activeAudioBandRanges))}` : '';
+  const liveUrl = `${projectManager.getServerUrl()}/__live/index.html?live=true${bandParam}&t=${Date.now()}`;
   await liveWindow.loadURL(liveUrl);
   liveWindow.show();
 
@@ -464,7 +468,8 @@ async function openPreviewWindow() {
     console.log(`[PreviewWin ${level}] ${message} (${sourceId}:${line})`);
   });
 
-  const previewUrl = `${projectManager.getServerUrl()}/index.html?popout=true&t=${Date.now()}`;
+  const bandParam = activeAudioBandRanges ? `&bandRanges=${encodeURIComponent(JSON.stringify(activeAudioBandRanges))}` : '';
+  const previewUrl = `${projectManager.getServerUrl()}/index.html?popout=true${bandParam}&t=${Date.now()}`;
   await previewWindow.loadURL(previewUrl);
   previewWindow.show();
 
@@ -539,6 +544,134 @@ function notifyPreviewStatus() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('preview:statusChanged', getPreviewWindowStatus());
   }
+}
+
+// =========================================================================
+// Floating AI Chatbot Browser Window (Always On Top + Code Bridge)
+// =========================================================================
+function getChatbotWindowStatus() {
+  const isOpen = !!chatbotWindow && !chatbotWindow.isDestroyed();
+  return {
+    isOpen,
+    isAlwaysOnTop: isOpen ? chatbotWindow.isAlwaysOnTop() : false
+  };
+}
+
+function notifyChatbotStatus() {
+  const status = getChatbotWindowStatus();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('chatbot:statusChanged', status);
+  }
+  if (chatbotWindow && !chatbotWindow.isDestroyed()) {
+    chatbotWindow.webContents.send('chatbot:statusChanged', status);
+  }
+}
+
+async function openChatbotWindow(options = {}) {
+  if (chatbotWindow && !chatbotWindow.isDestroyed()) {
+    if (typeof options.alwaysOnTop === 'boolean') {
+      if (process.platform === 'darwin') {
+        chatbotWindow.setAlwaysOnTop(options.alwaysOnTop, 'floating');
+      } else {
+        chatbotWindow.setAlwaysOnTop(options.alwaysOnTop);
+      }
+    }
+    chatbotWindow.show();
+    chatbotWindow.focus();
+    notifyChatbotStatus();
+    return getChatbotWindowStatus();
+  }
+
+  const initialTop = options.alwaysOnTop !== undefined ? !!options.alwaysOnTop : true;
+  let winX;
+  let winY;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const b = mainWindow.getBounds();
+    winX = b.x + Math.max(40, b.width - 540);
+    winY = b.y + 60;
+  }
+
+  chatbotWindow = new BrowserWindow({
+    title: 'p5-Studio-PRO - AI Chatbot Browser',
+    width: 520,
+    height: 780,
+    minWidth: 380,
+    minHeight: 460,
+    x: winX,
+    y: winY,
+    alwaysOnTop: initialTop,
+    backgroundColor: '#0d0f14',
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/chatbotPreload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: true,
+      sandbox: false
+    }
+  });
+
+  if (process.platform === 'darwin' && initialTop) {
+    chatbotWindow.setAlwaysOnTop(true, 'floating');
+  }
+
+  // Configure persistent chatbot session with clean Chrome User-Agent
+  const chatSession = session.fromPartition('persist:chatbot');
+  const cleanUA = app.userAgentFallback
+    .replace(/\s*Electron\/[^\s]+/g, '')
+    .replace(/\s*p5-studio-pro\/[^\s]+/gi, '');
+  chatSession.setUserAgent(cleanUA);
+
+  const browserHtmlPath = path.join(__dirname, 'chatbotBrowser.html');
+  await chatbotWindow.loadFile(browserHtmlPath);
+  chatbotWindow.show();
+
+  chatbotWindow.on('always-on-top-changed', () => notifyChatbotStatus());
+  chatbotWindow.on('closed', () => {
+    chatbotWindow = null;
+    notifyChatbotStatus();
+  });
+
+  notifyChatbotStatus();
+  return getChatbotWindowStatus();
+}
+
+function closeChatbotWindow() {
+  if (chatbotWindow && !chatbotWindow.isDestroyed()) {
+    chatbotWindow.close();
+    chatbotWindow = null;
+    notifyChatbotStatus();
+  }
+  return getChatbotWindowStatus();
+}
+
+function toggleChatbotWindow(options = {}) {
+  if (chatbotWindow && !chatbotWindow.isDestroyed()) {
+    return closeChatbotWindow();
+  }
+  return openChatbotWindow(options);
+}
+
+function setChatbotAlwaysOnTop(flag) {
+  if (chatbotWindow && !chatbotWindow.isDestroyed()) {
+    const next = !!flag;
+    if (process.platform === 'darwin') {
+      chatbotWindow.setAlwaysOnTop(next, 'floating');
+    } else {
+      chatbotWindow.setAlwaysOnTop(next);
+    }
+    notifyChatbotStatus();
+    return chatbotWindow.isAlwaysOnTop();
+  }
+  return false;
+}
+
+function toggleChatbotAlwaysOnTop() {
+  if (chatbotWindow && !chatbotWindow.isDestroyed()) {
+    return setChatbotAlwaysOnTop(!chatbotWindow.isAlwaysOnTop());
+  }
+  return false;
 }
 
 /**
@@ -948,6 +1081,51 @@ function setupIPC() {
     return false;
   });
 
+  // --- Audio Analysis Frequency Band Ranges IPC ---
+  ipcMain.handle('audio:setBandRanges', (event, ranges) => {
+    activeAudioBandRanges = ranges || null;
+    if (liveWindow && !liveWindow.isDestroyed()) {
+      liveWindow.webContents.send('audio:setBandRanges', ranges);
+    }
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.webContents.send('audio:setBandRanges', ranges);
+    }
+    return true;
+  });
+
+  // --- Floating AI Chatbot Browser IPC ---
+  ipcMain.handle('chatbot:open', (event, options) => openChatbotWindow(options));
+  ipcMain.handle('chatbot:close', () => closeChatbotWindow());
+  ipcMain.handle('chatbot:toggle', (event, options) => toggleChatbotWindow(options));
+  ipcMain.handle('chatbot:getStatus', () => getChatbotWindowStatus());
+  ipcMain.handle('chatbot:setAlwaysOnTop', (event, flag) => setChatbotAlwaysOnTop(flag));
+  ipcMain.handle('chatbot:toggleAlwaysOnTop', () => toggleChatbotAlwaysOnTop());
+  ipcMain.handle('chatbot:notifyActiveFile', (event, activeFile) => {
+    if (chatbotWindow && !chatbotWindow.isDestroyed()) {
+      chatbotWindow.webContents.send('chatbot:activeFileChanged', { activeFile });
+    }
+  });
+  ipcMain.handle('chatbot:getActiveCode', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    try {
+      return await mainWindow.webContents.executeJavaScript(
+        'window.__ideGetChatbotContext ? window.__ideGetChatbotContext() : null'
+      );
+    } catch (e) {
+      return null;
+    }
+  });
+  ipcMain.handle('chatbot:applyCode', async (event, { code, mode } = {}) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    try {
+      return await mainWindow.webContents.executeJavaScript(
+        `window.__ideApplyChatbotCode ? window.__ideApplyChatbotCode(${JSON.stringify(code || '')}, ${JSON.stringify(mode || 'replace')}) : { success: false }`
+      );
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   // --- Compiler Diagnostics Relay to Main Editor ---
   ipcMain.handle('shader:reportDiagnostics', (event, { errors }) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1001,9 +1179,11 @@ async function startDeterministicExport(options) {
     outputPath,
     audioPath = null,
     oscPath = null,
-    profile = 'h264-master'
+    profile = 'h264-master',
+    bandRanges = null
   } = options;
 
+  const effectiveBandRanges = bandRanges || activeAudioBandRanges;
   const totalFrames = Math.round(durationSec * fps);
 
   // If a previous export window exists, close it
@@ -1049,7 +1229,8 @@ async function startDeterministicExport(options) {
   });
 
   // Query parameters instruct sandboxPreload to run in deterministic offline export mode
-  const exportUrl = `${projectManager.getServerUrl()}/index.html?export=true&w=${width}&h=${height}&fps=${fps}&totalFrames=${totalFrames}&audioPath=${encodeURIComponent(audioPath || '')}&oscPath=${encodeURIComponent(oscPath || '')}`;
+  const bandParam = effectiveBandRanges ? `&bandRanges=${encodeURIComponent(JSON.stringify(effectiveBandRanges))}` : '';
+  const exportUrl = `${projectManager.getServerUrl()}/index.html?export=true&w=${width}&h=${height}&fps=${fps}&totalFrames=${totalFrames}&audioPath=${encodeURIComponent(audioPath || '')}&oscPath=${encodeURIComponent(oscPath || '')}${bandParam}`;
 
   console.log(`[Export] Loading offline lockstep sketch: ${exportUrl}`);
   await exportWindow.loadURL(exportUrl);
@@ -1164,6 +1345,26 @@ app.whenReady().then(async () => {
   setupIPC();
   await createMainWindow();
 
+  app.on('web-contents-created', (event, contents) => {
+    if (contents.getType() === 'webview') {
+      contents.setWindowOpenHandler(({ url }) => {
+        if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+          return {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              width: 500,
+              height: 680,
+              webPreferences: {
+                partition: 'persist:chatbot'
+              }
+            }
+          };
+        }
+        return { action: 'deny' };
+      });
+    }
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createMainWindow();
@@ -1183,4 +1384,5 @@ app.on('before-quit', () => {
   if (ffmpegExporter) ffmpegExporter.cancelExport();
   if (liveWindow && !liveWindow.isDestroyed()) liveWindow.destroy();
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();
+  if (chatbotWindow && !chatbotWindow.isDestroyed()) chatbotWindow.destroy();
 });

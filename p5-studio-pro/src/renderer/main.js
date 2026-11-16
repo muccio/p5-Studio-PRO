@@ -75,6 +75,15 @@ class IDEApp {
     const savedGain = parseFloat(localStorage.getItem('p5_studio_audio_gain') || '1.0');
     this.currentAudioGain = (!isNaN(savedGain) && savedGain >= 0.1 && savedGain <= 10.0) ? savedGain : 1.0;
     this.currentAudioDeviceId = localStorage.getItem('p5_studio_audio_device') || 'default';
+    this.defaultBandRanges = {
+      sub: [20, 60],
+      bass: [60, 250],
+      lowMid: [250, 500],
+      mid: [500, 2000],
+      highMid: [2000, 4000],
+      treble: [4000, 20000]
+    };
+    this.currentBandRanges = this.loadSavedBandRanges();
     this.inputPeakHold = 0;
     this.inputPeakHoldTime = 0;
 
@@ -105,8 +114,10 @@ class IDEApp {
     this.initEventListeners();
     this.initAudioMeters();
     this.initAudioGainControls();
+    this.initAudioBandRangesControls();
     this.initConsoleControls();
     this.initLiveWindowControls();
+    this.initChatbotBrowserControls();
 
     // Check & request macOS system microphone permission early
     if (window.electronAPI && window.electronAPI.system && window.electronAPI.system.requestMicrophoneAccess) {
@@ -422,6 +433,9 @@ class IDEApp {
     }
 
     document.getElementById('status-file-info').textContent = relativePath;
+    if (window.electronAPI && window.electronAPI.chatbot && window.electronAPI.chatbot.notifyActiveFile) {
+      window.electronAPI.chatbot.notifyActiveFile(relativePath);
+    }
     this.renderTabs();
     this.highlightActiveTreeItem();
     if (relativePath.endsWith('.js')) {
@@ -827,6 +841,7 @@ class IDEApp {
 
     frame.addEventListener('load', () => {
       this.sendAudioGainToPreview(this.currentAudioGain);
+      this.sendAudioBandRangesToPreview(this.currentBandRanges);
       if (this.currentAudioDeviceId && this.currentAudioDeviceId !== 'default') {
         this.sendAudioDeviceToPreview(this.currentAudioDeviceId);
       }
@@ -1253,6 +1268,218 @@ class IDEApp {
     }
   }
 
+  loadSavedBandRanges() {
+    const defaults = {
+      sub: [20, 60],
+      bass: [60, 250],
+      lowMid: [250, 500],
+      mid: [500, 2000],
+      highMid: [2000, 4000],
+      treble: [4000, 20000]
+    };
+    try {
+      const raw = localStorage.getItem('p5_studio_audio_band_ranges');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        for (const k of Object.keys(defaults)) {
+          if (Array.isArray(parsed[k]) && parsed[k].length >= 2) {
+            const lo = Math.max(0, Math.min(24000, Number(parsed[k][0]) || 0));
+            const hi = Math.max(lo + 1, Math.min(24000, Number(parsed[k][1]) || (lo + 1)));
+            defaults[k] = [lo, hi];
+          }
+        }
+      }
+    } catch (e) {}
+    return defaults;
+  }
+
+  sendAudioBandRangesToPreview(ranges) {
+    const frame = document.getElementById('preview-frame');
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: 'audio:setBandRanges', ranges }, '*');
+      try {
+        if (frame.contentWindow.ideAudio && typeof frame.contentWindow.ideAudio.setBandRanges === 'function') {
+          frame.contentWindow.ideAudio.setBandRanges(ranges);
+        }
+      } catch (e) {}
+    }
+    if (window.electronAPI && window.electronAPI.audio && window.electronAPI.audio.setBandRanges) {
+      window.electronAPI.audio.setBandRanges(ranges).catch(() => {});
+    }
+  }
+
+  initAudioBandRangesControls() {
+    const presets = {
+      default: { sub: [20, 60], bass: [60, 250], lowMid: [250, 500], mid: [500, 2000], highMid: [2000, 4000], treble: [4000, 20000] },
+      kick: { sub: [20, 80], bass: [80, 180], lowMid: [180, 450], mid: [450, 1800], highMid: [1800, 5000], treble: [5000, 20000] },
+      vocal: { sub: [20, 70], bass: [70, 200], lowMid: [200, 600], mid: [600, 3000], highMid: [3000, 6000], treble: [6000, 20000] },
+      wide: { sub: [20, 90], bass: [90, 300], lowMid: [300, 800], mid: [800, 2500], highMid: [2500, 6000], treble: [6000, 20000] }
+    };
+    const keys = ['sub', 'bass', 'lowMid', 'mid', 'highMid', 'treble'];
+
+    const btnToggle = document.getElementById('btn-toggle-freq-ranges');
+    const body = document.getElementById('freq-ranges-body');
+    const chevron = document.getElementById('freq-ranges-chevron');
+    const presetSelect = document.getElementById('select-freq-preset');
+    const btnReset = document.getElementById('btn-reset-freq-ranges');
+
+    const formatShortHz = (hz) => (hz >= 1000 && hz % 1000 === 0 ? `${hz / 1000}k` : `${hz}`);
+
+    const detectPresetName = (ranges) => {
+      for (const [name, p] of Object.entries(presets)) {
+        const matches = keys.every(k => ranges[k][0] === p[k][0] && ranges[k][1] === p[k][1]);
+        if (matches) return name;
+      }
+      return 'custom';
+    };
+
+    const syncUI = (persist = false) => {
+      for (const k of keys) {
+        const [lo, hi] = this.currentBandRanges[k];
+        const minInput = document.getElementById(`freq-${k}-min`);
+        const maxInput = document.getElementById(`freq-${k}-max`);
+        const hzLabel = document.getElementById(`label-hz-${k}`);
+        if (minInput && document.activeElement !== minInput) minInput.value = lo;
+        if (maxInput && document.activeElement !== maxInput) maxInput.value = hi;
+        if (hzLabel) hzLabel.textContent = `${formatShortHz(lo)}-${formatShortHz(hi)}`;
+      }
+      if (presetSelect) {
+        presetSelect.value = detectPresetName(this.currentBandRanges);
+      }
+      if (persist) {
+        try {
+          localStorage.setItem('p5_studio_audio_band_ranges', JSON.stringify(this.currentBandRanges));
+        } catch (e) {}
+      }
+      this.sendAudioBandRangesToPreview(this.currentBandRanges);
+    };
+
+    const setExpanded = (expanded) => {
+      if (!body || !btnToggle) return;
+      body.classList.toggle('hidden', !expanded);
+      btnToggle.classList.toggle('active', expanded);
+      if (chevron) chevron.textContent = expanded ? '▴' : '▾';
+    };
+
+    if (btnToggle && body) {
+      btnToggle.addEventListener('click', () => {
+        setExpanded(body.classList.contains('hidden'));
+      });
+    }
+
+    document.querySelectorAll('.meter-hz-label').forEach((lbl) => {
+      lbl.addEventListener('click', () => {
+        setExpanded(true);
+        const band = lbl.closest('.band-meter')?.dataset?.band;
+        const targetInput = band ? document.getElementById(`freq-${band}-min`) : null;
+        if (targetInput) {
+          targetInput.focus();
+          targetInput.select();
+        }
+      });
+    });
+
+    for (const k of keys) {
+      const minInput = document.getElementById(`freq-${k}-min`);
+      const maxInput = document.getElementById(`freq-${k}-max`);
+      const onBandChange = () => {
+        const rawLo = Number(minInput ? minInput.value : this.currentBandRanges[k][0]);
+        const rawHi = Number(maxInput ? maxInput.value : this.currentBandRanges[k][1]);
+        const lo = Math.max(0, Math.min(23999, isNaN(rawLo) ? 0 : rawLo));
+        const hi = Math.max(lo + 1, Math.min(24000, isNaN(rawHi) ? lo + 1 : rawHi));
+        this.currentBandRanges[k] = [lo, hi];
+        syncUI(true);
+      };
+      if (minInput) minInput.addEventListener('change', onBandChange);
+      if (maxInput) maxInput.addEventListener('change', onBandChange);
+    }
+
+    if (presetSelect) {
+      presetSelect.addEventListener('change', () => {
+        const chosen = presets[presetSelect.value];
+        if (chosen) {
+          this.currentBandRanges = JSON.parse(JSON.stringify(chosen));
+          syncUI(true);
+        }
+      });
+    }
+
+    if (btnReset) {
+      btnReset.addEventListener('click', () => {
+        this.currentBandRanges = JSON.parse(JSON.stringify(presets.default));
+        syncUI(true);
+      });
+    }
+
+    syncUI(false);
+  }
+
+  initChatbotBrowserControls() {
+    const btnOpen = document.getElementById('btn-open-chatbot');
+
+    window.__ideGetChatbotContext = () => {
+      const code = this.editor ? this.editor.getValue() : '';
+      const selectP5 = document.getElementById('select-p5-version');
+      const recentErrors = (this.consoleEntries || [])
+        .filter(e => e.level === 'error' || e.level === 'warn')
+        .slice(-8)
+        .map(e => `[${e.level.toUpperCase()}] ${e.text}`);
+      return {
+        filePath: this.activeFilePath || 'sketch.js',
+        code,
+        p5Version: selectP5 ? selectP5.value : '',
+        recentErrors
+      };
+    };
+
+    window.__ideApplyChatbotCode = (newCode, mode = 'replace') => {
+      if (!this.editor || !this.activeFilePath) {
+        return { success: false };
+      }
+      const model = this.editor.getModel();
+      if (!model) return { success: false };
+
+      if (mode === 'insert') {
+        const selection = this.editor.getSelection() || model.getFullModelRange();
+        this.editor.executeEdits('chatbot-bridge', [{
+          range: selection,
+          text: newCode,
+          forceMoveMarkers: true
+        }]);
+      } else {
+        this.editor.pushUndoStop();
+        this.editor.executeEdits('chatbot-bridge', [{
+          range: model.getFullModelRange(),
+          text: newCode,
+          forceMoveMarkers: true
+        }]);
+        this.editor.pushUndoStop();
+      }
+      this.editor.focus();
+      return { success: true, filePath: this.activeFilePath };
+    };
+
+    if (btnOpen && window.electronAPI && window.electronAPI.chatbot) {
+      btnOpen.addEventListener('click', async () => {
+        let initialTop = true;
+        try {
+          const saved = localStorage.getItem('p5_studio_chatbot_always_on_top');
+          if (saved !== null) initialTop = saved === 'true';
+        } catch (e) {}
+        await window.electronAPI.chatbot.toggle({ alwaysOnTop: initialTop });
+      });
+
+      window.electronAPI.chatbot.onStatusChanged((status) => {
+        btnOpen.classList.toggle('active', !!(status && status.isOpen));
+        if (status && status.isOpen && typeof status.isAlwaysOnTop === 'boolean') {
+          try {
+            localStorage.setItem('p5_studio_chatbot_always_on_top', status.isAlwaysOnTop ? 'true' : 'false');
+          } catch (e) {}
+        }
+      });
+    }
+  }
+
   async populateAudioDevices() {
     try {
       const select = document.getElementById('audio-device-select');
@@ -1532,7 +1759,8 @@ class IDEApp {
       profile,
       outputPath,
       audioPath,
-      oscPath
+      oscPath,
+      bandRanges: this.currentBandRanges
     });
   }
 
