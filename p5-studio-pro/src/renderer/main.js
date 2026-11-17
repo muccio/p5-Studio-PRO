@@ -1,4 +1,4 @@
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import * as monaco from 'monaco-editor/esm/vs/editor/edcore.main';
 import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution';
 import 'monaco-editor/esm/vs/language/json/monaco.contribution';
 import 'monaco-editor/esm/vs/language/html/monaco.contribution';
@@ -250,11 +250,17 @@ class IDEApp {
       fontSize: this.currentFontSize || 13,
       fontFamily: this.currentFontFamily || "JetBrains Mono, 'Fira Code', Menlo, Consolas, monospace",
       automaticLayout: true,
+      fixedOverflowWidgets: true,
       minimap: { enabled: true },
       lineNumbers: 'on',
       scrollBeyondLastLine: false,
       renderWhitespace: 'selection',
       tabSize: 2,
+      find: {
+        addExtraSpaceOnTop: false,
+        autoFindInSelection: 'never',
+        seedSearchStringFromSelection: 'selection'
+      },
       quickSuggestions: {
         other: true,
         comments: false,
@@ -2768,8 +2774,22 @@ class IDEApp {
   // =========================================================================
   // 12. Event Listeners Wiring
   // =========================================================================
+  triggerEditorFind() {
+    if (!this.editor) return;
+    this.editor.focus();
+    const action = this.editor.getAction('actions.find');
+    if (action) action.run();
+  }
+
+  triggerEditorReplace() {
+    if (!this.editor) return;
+    this.editor.focus();
+    const action = this.editor.getAction('editor.action.startFindReplaceAction');
+    if (action) action.run();
+  }
+
   initEventListeners() {
-    // Global hotkeys: Cmd+Enter / Ctrl+Enter (Push Live Stage), Cmd+O / Ctrl+O (Open Project), Cmd+Shift+N (New Project)
+    // Global hotkeys: Cmd+Enter / Ctrl+Enter (Push Live Stage), Cmd+O / Ctrl+O (Open Project), Cmd+Shift+N (New Project), Cmd+F (Find), Cmd+Alt+F / Ctrl+H (Replace)
     window.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -2782,8 +2802,27 @@ class IDEApp {
         e.preventDefault();
         const btnOpen = document.getElementById('btn-open-project');
         if (btnOpen) btnOpen.click();
+      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        this.triggerEditorFind();
+      } else if (
+        ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === 'f' || e.key === 'F')) ||
+        (e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'h' || e.key === 'H')) ||
+        ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'h' || e.key === 'H'))
+      ) {
+        e.preventDefault();
+        this.triggerEditorReplace();
       }
     });
+
+    const btnEditorFind = document.getElementById('btn-editor-find');
+    if (btnEditorFind) {
+      btnEditorFind.addEventListener('click', () => this.triggerEditorFind());
+    }
+    const btnEditorReplace = document.getElementById('btn-editor-replace');
+    if (btnEditorReplace) {
+      btnEditorReplace.addEventListener('click', () => this.triggerEditorReplace());
+    }
 
     const btnNewProject = document.getElementById('btn-new-project');
     if (btnNewProject) {

@@ -830,6 +830,22 @@ test('21. Verify Configurable Audio Frequency Band Ranges & Floating AI Chatbot 
 });
 
 // ----------------------------------------------------
+// 22. Test Monaco Editor Full Contribs (Find & Find/Replace Widget + Actions + Hotkeys)
+// ----------------------------------------------------
+test('22. Verify Monaco Editor Find & Find/Replace Support (edcore.main + UI Buttons + Hotkeys)', () => {
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes("monaco-editor/esm/vs/editor/edcore.main"), 'main.js must import monaco edcore.main so Find/Replace controller, multi-cursor, folding, and comments are bundled');
+  assert.ok(mainJsSrc.includes('triggerEditorFind'), 'main.js must implement triggerEditorFind');
+  assert.ok(mainJsSrc.includes('triggerEditorReplace'), 'main.js must implement triggerEditorReplace');
+  assert.ok(mainJsSrc.includes("getAction('actions.find')"), 'main.js must invoke Monaco actions.find');
+  assert.ok(mainJsSrc.includes("getAction('editor.action.startFindReplaceAction')"), 'main.js must invoke Monaco editor.action.startFindReplaceAction');
+
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="btn-editor-find"'), 'index.html must include btn-editor-find button');
+  assert.ok(htmlSrc.includes('id="btn-editor-replace"'), 'index.html must include btn-editor-replace button');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {
