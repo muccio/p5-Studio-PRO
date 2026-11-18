@@ -1529,7 +1529,25 @@ class IdeAudioEngine {
     return Math.min(1.0, (sum / (endBin - startBin + 1)) * 4.0);
   }
 
+  _ensureFrameUpdated() {
+    if (isExportMode) {
+      if (this._lastOfflineFrame !== currentExportFrame) {
+        this.update(currentExportFrame, exportTargetFps);
+      }
+      return;
+    }
+    const now = performance.now();
+    if (!this._lastLiveUpdateTs || (now - this._lastLiveUpdateTs) > 4) {
+      this._lastLiveUpdateTs = now;
+      this._updateLive();
+    }
+  }
+
   getRMS() { return this.currentRMS; }
+  getLevel() {
+    this._ensureFrameUpdated();
+    return this.currentRMS;
+  }
   getFFT() { return this.liveFreqData; }
   getWaveform() { return this.liveTimeData; }
   getEnergy(bandOrLowHz, highHz) {
@@ -1538,6 +1556,180 @@ class IdeAudioEngine {
     }
     const binHz = (this.sampleRate / 2) / (this.fftSize / 2);
     return this._calcBandLive(bandOrLowHz, highHz, binHz);
+  }
+
+  // =========================================================================
+  // p5.FFT-Compatible Hook API (Drop-in replacement for p5.sound)
+  // =========================================================================
+  smooth(s) {
+    if (typeof s === 'number' && !isNaN(s)) {
+      this.smoothingTimeConstant = Math.max(0.0, Math.min(0.999, s));
+      if (this.analyser) {
+        this.analyser.smoothingTimeConstant = this.smoothingTimeConstant;
+      }
+    }
+    return this.smoothingTimeConstant;
+  }
+
+  analyze(bins = 1024, scale = null) {
+    this._ensureFrameUpdated();
+    let targetBins = 1024;
+    let scaleMode = scale;
+    if (typeof bins === 'string') {
+      scaleMode = bins;
+    } else if (typeof bins === 'number' && !isNaN(bins)) {
+      targetBins = Math.max(16, Math.min(1024, Math.floor(bins)));
+    }
+    const isDb = typeof scaleMode === 'string' && scaleMode.toLowerCase() === 'db';
+    const out = new Array(targetBins);
+    const srcLen = this.liveFreqData.length;
+    for (let i = 0; i < targetBins; i++) {
+      const idx = Math.min(srcLen - 1, Math.floor((i * srcLen) / targetBins));
+      const byteVal = this.liveFreqData[idx] || 0;
+      out[i] = isDb ? (((byteVal / 255.0) * 70.0) - 100.0) : byteVal;
+    }
+    this._lastSpectrum = out;
+    return out;
+  }
+
+  waveform(bins = 1024, precision = null) {
+    this._ensureFrameUpdated();
+    let targetBins = 1024;
+    if (typeof bins === 'number' && !isNaN(bins)) {
+      targetBins = Math.max(16, Math.min(2048, Math.floor(bins)));
+    }
+    const out = new Array(targetBins);
+    const srcLen = this.liveTimeData.length;
+    for (let i = 0; i < targetBins; i++) {
+      const idx = Math.min(srcLen - 1, Math.floor((i * srcLen) / targetBins));
+      const byteVal = this.liveTimeData[idx] !== undefined ? this.liveTimeData[idx] : 128;
+      out[i] = (byteVal - 128.0) / 128.0;
+    }
+    return out;
+  }
+
+  getFFTEnergy(frequency1, frequency2) {
+    this._ensureFrameUpdated();
+    if (frequency1 === undefined || frequency1 === null) {
+      return Math.max(0, Math.min(255, this.currentRMS * 255.0));
+    }
+    if (typeof frequency1 === 'string') {
+      const keyMap = {
+        sub: 'sub',
+        bass: 'bass',
+        lowmid: 'lowMid',
+        'low-mid': 'lowMid',
+        lmid: 'lowMid',
+        mid: 'mid',
+        highmid: 'highMid',
+        'high-mid': 'highMid',
+        hmid: 'highMid',
+        treble: 'treble',
+        high: 'treble'
+      };
+      const resolved = keyMap[frequency1.trim().toLowerCase()] || frequency1;
+      const norm = this.bands[resolved] !== undefined ? this.bands[resolved] : 0;
+      return Math.max(0, Math.min(255, norm * 255.0));
+    }
+    const binHz = (this.sampleRate / 2) / this.liveFreqData.length;
+    if (typeof frequency1 === 'number' && typeof frequency2 === 'number') {
+      return Math.max(0, Math.min(255, this._calcBandLive(frequency1, frequency2, binHz) * 255.0));
+    }
+    if (typeof frequency1 === 'number') {
+      const bin = Math.max(0, Math.min(this.liveFreqData.length - 1, Math.round(frequency1 / binHz)));
+      return this.liveFreqData[bin] || 0;
+    }
+    return 0;
+  }
+
+  getCentroid() {
+    this._ensureFrameUpdated();
+    const binHz = (this.sampleRate / 2) / this.liveFreqData.length;
+    let weightedSum = 0;
+    let totalAmp = 0;
+    for (let i = 0; i < this.liveFreqData.length; i++) {
+      const amp = this.liveFreqData[i];
+      weightedSum += (i * binHz) * amp;
+      totalAmp += amp;
+    }
+    return totalAmp > 0 ? (weightedSum / totalAmp) : 0;
+  }
+
+  linAverages(N = 16) {
+    this._ensureFrameUpdated();
+    const groups = Math.max(1, Math.min(512, Math.floor(Number(N) || 16)));
+    const out = new Array(groups);
+    const binCount = this.liveFreqData.length;
+    const step = binCount / groups;
+    for (let g = 0; g < groups; g++) {
+      const start = Math.floor(g * step);
+      const end = Math.min(binCount - 1, Math.floor((g + 1) * step) - 1);
+      let sum = 0;
+      let count = 0;
+      for (let i = start; i <= Math.max(start, end); i++) {
+        sum += this.liveFreqData[i];
+        count++;
+      }
+      out[g] = count > 0 ? (sum / count) : 0;
+    }
+    return out;
+  }
+
+  getOctaveBands(N = 3, fCtr0 = 15.625) {
+    const n = Math.max(1, Number(N) || 3);
+    const root2 = Math.pow(2, 1 / (2 * n));
+    const nyquist = this.sampleRate / 2;
+    const bands = [];
+    let ctr = Math.max(1, Number(fCtr0) || 15.625);
+    while (ctr < nyquist) {
+      const lo = ctr / root2;
+      const hi = Math.min(nyquist, ctr * root2);
+      bands.push({ lo, ctr, hi });
+      ctr = ctr * Math.pow(2, 1 / n);
+    }
+    return bands;
+  }
+
+  logAverages(octaveBands) {
+    this._ensureFrameUpdated();
+    const bands = Array.isArray(octaveBands) && octaveBands.length > 0
+      ? octaveBands
+      : this.getOctaveBands(3, 15.625);
+    const binHz = (this.sampleRate / 2) / this.liveFreqData.length;
+    return bands.map((b) => Math.max(0, Math.min(255, this._calcBandLive(b.lo, b.hi, binHz) * 255.0)));
+  }
+
+  createFFT(smoothing = 0.8, bins = 1024) {
+    return new IdeP5FFT(smoothing, bins);
+  }
+
+  createAmplitude(smoothing = 0) {
+    return new IdeP5Amplitude(smoothing);
+  }
+
+  createAudioIn() {
+    return new IdeP5AudioIn();
+  }
+
+  enableP5SoundHooks(force = true) {
+    const P5 = window.p5;
+    if (P5) {
+      if (force || !P5.FFT) P5.FFT = IdeP5FFT;
+      if (force || !P5.Amplitude) P5.Amplitude = IdeP5Amplitude;
+      if (force || !P5.AudioIn) P5.AudioIn = IdeP5AudioIn;
+    }
+    if (force || typeof window.userStartAudio !== 'function') {
+      window.userStartAudio = () => {
+        if (this.audioCtx && this.audioCtx.state === 'suspended') {
+          return this.audioCtx.resume().catch(() => {});
+        }
+        return Promise.resolve();
+      };
+    }
+    if (force || typeof window.getAudioContext !== 'function') {
+      window.getAudioContext = () => this.audioCtx;
+    }
+    return true;
   }
 
   isBeat(threshold = 0.5, minIntervalMs = 200) {
@@ -2103,15 +2295,253 @@ class IdePerformanceReplayEngine {
 }
 
 // =========================================================================
+// 5c. p5.sound-Compatible IDE Hook Classes (FFT, Amplitude, AudioIn)
+// =========================================================================
+class IdeP5FFT {
+  constructor(smoothing = 0.8, bins = 1024) {
+    this.bins = Math.max(16, Math.min(1024, Number(bins) || 1024));
+    this.smoothing = typeof smoothing === 'number' ? Math.max(0.0, Math.min(0.999, smoothing)) : 0.8;
+    if (window.ideAudio) window.ideAudio.smooth(this.smoothing);
+  }
+  setInput() { return this; }
+  smooth(s) {
+    if (typeof s === 'number') this.smoothing = Math.max(0.0, Math.min(0.999, s));
+    return window.ideAudio ? window.ideAudio.smooth(this.smoothing) : this.smoothing;
+  }
+  analyze(bins, scale) {
+    const b = typeof bins === 'number' ? bins : this.bins;
+    const sc = typeof bins === 'string' ? bins : scale;
+    return window.ideAudio ? window.ideAudio.analyze(b, sc) : new Array(this.bins).fill(0);
+  }
+  waveform(bins, precision) {
+    const b = typeof bins === 'number' ? bins : this.bins;
+    const pr = typeof bins === 'string' ? bins : precision;
+    return window.ideAudio ? window.ideAudio.waveform(b, pr) : new Array(this.bins).fill(0);
+  }
+  getEnergy(frequency1, frequency2) {
+    return window.ideAudio ? window.ideAudio.getFFTEnergy(frequency1, frequency2) : 0;
+  }
+  getCentroid() {
+    return window.ideAudio ? window.ideAudio.getCentroid() : 0;
+  }
+  linAverages(N = 16) {
+    return window.ideAudio ? window.ideAudio.linAverages(N) : [];
+  }
+  logAverages(octaveBands) {
+    return window.ideAudio ? window.ideAudio.logAverages(octaveBands) : [];
+  }
+  getOctaveBands(N = 3, fCtr0 = 15.625) {
+    return window.ideAudio ? window.ideAudio.getOctaveBands(N, fCtr0) : [];
+  }
+}
+
+class IdeP5Amplitude {
+  constructor(smoothing = 0) {
+    this.smoothing = typeof smoothing === 'number' ? Math.max(0.0, Math.min(0.999, smoothing)) : 0;
+    this.normalize = false;
+    this.volMax = 0.001;
+    this._smoothedLevel = 0;
+  }
+  setInput() { return this; }
+  smooth(s) {
+    if (typeof s === 'number') this.smoothing = Math.max(0.0, Math.min(0.999, s));
+    return this.smoothing;
+  }
+  toggleNormalize(bool) {
+    this.normalize = typeof bool === 'boolean' ? bool : !this.normalize;
+  }
+  getLevel() {
+    const raw = window.ideAudio ? window.ideAudio.getLevel() : 0;
+    this._smoothedLevel = Math.max(raw, this._smoothedLevel * this.smoothing);
+    this.volMax = Math.max(this.volMax, this._smoothedLevel);
+    return this.normalize ? Math.min(1.0, this._smoothedLevel / this.volMax) : this._smoothedLevel;
+  }
+}
+
+class IdeP5AudioIn {
+  constructor() {
+    this.enabled = true;
+  }
+  start(successCallback) {
+    this.enabled = true;
+    if (window.ideAudio && !isExportMode && !window.ideAudio.liveStream) {
+      window.ideAudio.initLive(window.ideAudio.currentDeviceId);
+    }
+    if (typeof successCallback === 'function') {
+      try { successCallback(); } catch (e) {}
+    }
+  }
+  stop() { this.enabled = false; }
+  connect() {}
+  disconnect() {}
+  amp(vol) {
+    if (typeof vol === 'number' && window.ideAudio) {
+      window.ideAudio.setGain(vol);
+    }
+  }
+  getLevel() {
+    if (!this.enabled || !window.ideAudio) return 0;
+    return window.ideAudio.getLevel();
+  }
+  getSources(callback) {
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      return navigator.mediaDevices.enumerateDevices().then((devs) => {
+        const inputs = devs.filter((d) => d.kind === 'audioinput');
+        if (typeof callback === 'function') callback(inputs);
+        return inputs;
+      });
+    }
+    return Promise.resolve([]);
+  }
+  setSource(idxOrId) {
+    if (window.ideAudio && typeof idxOrId === 'string') {
+      window.ideAudio.setDevice(idxOrId);
+    }
+  }
+}
+
+// =========================================================================
+// 5d. Preview Viewport Zoom & Canvas Corner/Center Anchoring
+// =========================================================================
+const ANCHOR_MAP = {
+  'top-left':      { justify: 'flex-start', align: 'flex-start', posX: '0%',   posY: '0%' },
+  'top-center':    { justify: 'center',     align: 'flex-start', posX: '50%',  posY: '0%' },
+  'top-right':     { justify: 'flex-end',   align: 'flex-start', posX: '100%', posY: '0%' },
+  'center-left':   { justify: 'flex-start', align: 'center',     posX: '0%',   posY: '50%' },
+  'center':        { justify: 'center',     align: 'center',     posX: '50%',  posY: '50%' },
+  'center-right':  { justify: 'flex-end',   align: 'center',     posX: '100%', posY: '50%' },
+  'bottom-left':   { justify: 'flex-start', align: 'flex-end',   posX: '0%',   posY: '100%' },
+  'bottom-center': { justify: 'center',     align: 'flex-end',   posX: '50%',  posY: '100%' },
+  'bottom-right':  { justify: 'flex-end',   align: 'flex-end',   posX: '100%', posY: '100%' }
+};
+
+let viewportConfig = {
+  mode: 'fit',
+  zoom: 1,
+  anchor: 'center'
+};
+
+function applyViewportConfig(cfg = {}) {
+  if (isExportMode) return;
+  if (cfg && typeof cfg === 'object') {
+    if (typeof cfg.mode === 'string') viewportConfig.mode = cfg.mode;
+    if (typeof cfg.zoom === 'number' && !isNaN(cfg.zoom)) {
+      viewportConfig.zoom = Math.max(0.1, Math.min(8.0, cfg.zoom));
+    }
+    if (typeof cfg.anchor === 'string' && ANCHOR_MAP[cfg.anchor]) {
+      viewportConfig.anchor = cfg.anchor;
+    }
+  }
+
+  const a = ANCHOR_MAP[viewportConfig.anchor] || ANCHOR_MAP.center;
+  const z = viewportConfig.mode === 'fit' ? 1 : viewportConfig.zoom;
+  let styleEl = document.getElementById('studio-viewport-anchor-style');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'studio-viewport-anchor-style';
+    const parent = document.head || document.documentElement;
+    if (parent) parent.appendChild(styleEl);
+  }
+
+  if (viewportConfig.mode === 'native') {
+    const pInst = window.p5Instance || window._p5Instance || window;
+    const cEl = document.querySelector('canvas.p5Canvas') || document.querySelector('canvas');
+    const dpr = Number(pInst._pixelDensity || window.devicePixelRatio || 1);
+    const natW = Number(pInst.width || (cEl ? Math.round(cEl.width / Math.max(1, dpr)) : 0));
+    const natH = Number(pInst.height || (cEl ? Math.round(cEl.height / Math.max(1, dpr)) : 0));
+    const wRule = natW > 0 ? `${natW}px` : 'auto';
+    const hRule = natH > 0 ? `${natH}px` : 'auto';
+
+    styleEl.textContent = `
+      html, body {
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        display: flex !important;
+        justify-content: ${a.justify} !important;
+        align-items: ${a.align} !important;
+      }
+      main {
+        width: 100% !important;
+        height: 100% !important;
+        display: flex !important;
+        justify-content: ${a.justify} !important;
+        align-items: ${a.align} !important;
+      }
+      canvas, canvas.p5Canvas {
+        display: block !important;
+        width: ${wRule} !important;
+        height: ${hRule} !important;
+        max-width: none !important;
+        max-height: none !important;
+        object-fit: none !important;
+        object-position: ${a.posX} ${a.posY} !important;
+        transform-origin: ${a.posX} ${a.posY} !important;
+        transform: scale(${z}) !important;
+      }
+    `;
+  } else {
+    styleEl.textContent = `
+      html, body {
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        display: flex !important;
+        justify-content: ${a.justify} !important;
+        align-items: ${a.align} !important;
+      }
+      main {
+        width: 100% !important;
+        height: 100% !important;
+        display: flex !important;
+        justify-content: ${a.justify} !important;
+        align-items: ${a.align} !important;
+      }
+      canvas, canvas.p5Canvas {
+        display: block !important;
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain !important;
+        object-position: ${a.posX} ${a.posY} !important;
+        transform-origin: ${a.posX} ${a.posY} !important;
+        transform: scale(${z}) !important;
+      }
+    `;
+  }
+}
+
+// =========================================================================
 // 6. Instantiate and Expose Globals
 // =========================================================================
 window.ideAudio = new IdeAudioEngine();
+window.ideAudio.FFT = IdeP5FFT;
+window.ideAudio.Amplitude = IdeP5Amplitude;
+window.ideAudio.AudioIn = IdeP5AudioIn;
 window.ideOSC = new IdeOscEngine();
 window.ideShader = new IdeShaderManager();
 window.idePerformance = new IdePerformanceReplayEngine();
 
+if (ipcRenderer) {
+  ipcRenderer.on('preview:setViewportConfig', (event, cfg) => {
+    applyViewportConfig(cfg);
+  });
+}
+window.addEventListener('message', (event) => {
+  const data = event.data;
+  if (data && data.type === 'preview:setViewportConfig') {
+    applyViewportConfig(data.config || data);
+  }
+});
+
 // Automatically start live audio when user clicks or runs sketch
 window.addEventListener('DOMContentLoaded', () => {
+  if (window.ideAudio) {
+    window.ideAudio.enableP5SoundHooks(false);
+  }
   if (!isExportMode) {
     window.ideAudio.initLive();
   }

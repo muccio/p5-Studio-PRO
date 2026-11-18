@@ -426,18 +426,56 @@ function setupJavaScriptLanguageService() {
 /**
  * p5-Studio-PRO IDE Audio Engine API
  */
+declare interface IdeP5FFTInstance {
+  analyze(bins?: number, scale?: string): number[];
+  waveform(bins?: number, precision?: string): number[];
+  getEnergy(frequency1: 'sub' | 'bass' | 'lowMid' | 'mid' | 'highMid' | 'treble' | number, frequency2?: number): number;
+  getCentroid(): number;
+  smooth(smoothing?: number): number;
+  setInput(input?: any): IdeP5FFTInstance;
+  linAverages(N?: number): number[];
+  logAverages(octaveBands?: Array<{ lo: number; ctr: number; hi: number }>): number[];
+  getOctaveBands(N?: number, fCtr0?: number): Array<{ lo: number; ctr: number; hi: number }>;
+}
+
 declare interface IdeAudioEngine {
   /** Get current RMS overall audio loudness (0.0 to 1.0) */
   getRMS(): number;
-  /** Get 1024-bin normalized FFT frequency spectrum */
-  getFFT(): Float32Array;
-  /** Get 1024-sample normalized time-domain waveform (-1.0 to 1.0) */
-  getWaveform(): Float32Array;
-  /** Get normalized energy for a named frequency band or frequency range */
+  /** Alias of getRMS() compatible with p5.Amplitude.getLevel() (0.0 to 1.0) */
+  getLevel(): number;
+  /** Get 1024-bin raw Uint8Array (0..255) FFT frequency spectrum */
+  getFFT(): Uint8Array;
+  /** Get 2048-sample raw Uint8Array (0..255) time-domain waveform */
+  getWaveform(): Uint8Array;
+  /** Get normalized energy (0.0 to 1.0) for a named frequency band or frequency range */
   getEnergy(band: 'sub' | 'bass' | 'lowMid' | 'mid' | 'highMid' | 'treble'): number;
   getEnergy(lowHz: number, highHz: number): number;
+  /** p5.FFT-compatible spectrum analysis returning Array(bins) of 0..255 (or dB if scale='dB') */
+  analyze(bins?: number, scale?: string): number[];
+  /** p5.FFT-compatible time-domain waveform returning Array(bins) of floats in -1.0..1.0 */
+  waveform(bins?: number, precision?: string): number[];
+  /** p5.FFT-compatible energy in 0..255 for band ('bass', 'lowMid', 'mid', 'highMid', 'treble', 'sub') or Hz range */
+  getFFTEnergy(frequency1: 'sub' | 'bass' | 'lowMid' | 'mid' | 'highMid' | 'treble' | number, frequency2?: number): number;
+  /** p5.FFT-compatible spectral centroid in Hz */
+  getCentroid(): number;
+  /** Set or get FFT smoothing time constant (0.0 to 0.999) */
+  smooth(smoothing?: number): number;
+  /** p5.FFT-compatible linear frequency averages (0..255) */
+  linAverages(N?: number): number[];
+  /** p5.FFT-compatible logarithmic octave band averages (0..255) */
+  logAverages(octaveBands?: Array<{ lo: number; ctr: number; hi: number }>): number[];
+  /** Generate octave bands array for logAverages() */
+  getOctaveBands(N?: number, fCtr0?: number): Array<{ lo: number; ctr: number; hi: number }>;
+  /** Create a drop-in p5.FFT replacement object powered by the IDE native audio engine */
+  createFFT(smoothing?: number, bins?: number): IdeP5FFTInstance;
+  /** Create a drop-in p5.Amplitude replacement object powered by the IDE native audio engine */
+  createAmplitude(smoothing?: number): { getLevel(): number; smooth(s?: number): number; toggleNormalize(b?: boolean): void; setInput(i?: any): any };
+  /** Create a drop-in p5.AudioIn replacement object powered by the IDE native audio engine */
+  createAudioIn(): { start(cb?: () => void): void; stop(): void; getLevel(): number; amp(v: number): void; connect(): void; disconnect(): void };
+  /** Replace p5.FFT, p5.Amplitude, and p5.AudioIn with IDE native hooks */
+  enableP5SoundHooks(force?: boolean): boolean;
   /** True when transient peak energy exceeds dynamic threshold */
-  isBeat(): boolean;
+  isBeat(threshold?: number, minIntervalMs?: number): boolean;
   /** Returns the dynamic 1024x2 WebGL audio texture updated every frame */
   getTexture(p5Instance?: any): any;
   /** Current sample rate in Hz (e.g. 48000) */
@@ -1670,5 +1708,29 @@ export const P5_REFERENCE_DOCS = {
   TAU: {
     syntax: 'TAU',
     desc: 'Costante matematica τ = 2π (6.283185307179586).'
+  },
+  'ideAudio.createFFT': {
+    syntax: 'const fft = ideAudio.createFFT([smoothing], [bins])',
+    desc: 'Crea un oggetto compatibile 1:1 con `p5.FFT` (`analyze()`, `waveform()`, `getEnergy()` 0..255, `getCentroid()`, `linAverages()`, `logAverages()`) alimentato direttamente dagli hook audio nativi dell\'IDE senza dipendere da `p5.sound`.'
+  },
+  'ideAudio.analyze': {
+    syntax: 'ideAudio.analyze([bins], [scale])',
+    desc: 'Calcola e restituisce lo spettro FFT nel formato identico a `p5.FFT.analyze()`: un `Array(bins)` con valori `0..255` (oppure decibel `-100..-30` se `scale === "dB"`).'
+  },
+  'ideAudio.waveform': {
+    syntax: 'ideAudio.waveform([bins], [precision])',
+    desc: 'Restituisce la forma d\'onda nel dominio del tempo nel formato identico a `p5.FFT.waveform()`: un `Array(bins)` con valori float normalizzati tra `-1.0` e `+1.0`.'
+  },
+  'ideAudio.getFFTEnergy': {
+    syntax: 'ideAudio.getFFTEnergy(bandOrFreq1, [freq2])',
+    desc: 'Restituisce l\'energia in scala `0..255` (formato `p5.FFT.getEnergy()`) per banda (`"sub"`, `"bass"`, `"lowMid"`, `"mid"`, `"highMid"`, `"treble"`) o intervallo in Hz, rispettando gli intervalli personalizzati nell\'IDE.'
+  },
+  'ideAudio.getCentroid': {
+    syntax: 'ideAudio.getCentroid()',
+    desc: 'Calcola il centroide spettrale in Hz (formato identico a `p5.FFT.getCentroid()`).'
+  },
+  'ideAudio.enableP5SoundHooks': {
+    syntax: 'ideAudio.enableP5SoundHooks([force])',
+    desc: 'Sostituisce `p5.FFT`, `p5.Amplitude` e `p5.AudioIn` con gli hook nativi dell\'IDE, permettendo di usare il codice `p5.sound` invariato con il motore audio dell\'IDE.'
   }
 };

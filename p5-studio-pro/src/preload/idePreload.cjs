@@ -130,6 +130,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     toggleFullscreen: () => ipcRenderer.invoke('preview:toggleFullscreen'),
     exitFullscreen: () => ipcRenderer.invoke('preview:exitFullscreen'),
     getStatus: () => ipcRenderer.invoke('preview:getStatus'),
+    setViewportConfig: (cfg) => ipcRenderer.invoke('preview:setViewportConfig', cfg),
     reload: () => ipcRenderer.invoke('preview:reload'),
     notifyShaderHotReload: () => ipcRenderer.invoke('preview:notifyShaderHotReload'),
     onStatusChanged: (callback) => {

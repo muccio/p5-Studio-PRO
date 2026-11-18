@@ -108,6 +108,10 @@ class IDEApp {
     this.consoleFilter = 'all';
     this.consoleAutoClear = localStorage.getItem('p5_studio_console_autoclear') !== 'false';
 
+    // Preview Viewport Zoom & Canvas Anchor state
+    this.previewZoomSelectVal = localStorage.getItem('p5_studio_preview_zoom_val') || 'fit';
+    this.previewCanvasAnchor = localStorage.getItem('p5_studio_preview_anchor') || 'center';
+
     // Isolated Performance Recorder Controller
     this.performanceController = new PerformanceController(this);
   }
@@ -121,6 +125,7 @@ class IDEApp {
     this.initAudioGainControls();
     this.initAudioBandRangesControls();
     this.initConsoleControls();
+    this.initPreviewViewportControls();
     this.initLiveWindowControls();
     this.initChatbotBrowserControls();
     this.performanceController.initUI();
@@ -881,6 +886,8 @@ class IDEApp {
         }
       } else if (data.type === 'audio:update') {
         this.latestAudioMetrics = data;
+      } else if (data.type === 'preview:wheelZoom') {
+        this.stepPreviewZoom(data.deltaY < 0 ? 1 : -1);
       } else if (data.type === 'preview:toggleInlineFullscreen') {
         this.toggleInlinePreviewFullscreen();
       } else if (data.type === 'preview:exitInlineFullscreen') {
@@ -891,10 +898,119 @@ class IDEApp {
     frame.addEventListener('load', () => {
       this.sendAudioGainToPreview(this.currentAudioGain);
       this.sendAudioBandRangesToPreview(this.currentBandRanges);
+      this.sendViewportConfigToPreview();
       if (this.currentAudioDeviceId && this.currentAudioDeviceId !== 'default') {
         this.sendAudioDeviceToPreview(this.currentAudioDeviceId);
       }
     });
+  }
+
+  getPreviewViewportPayload() {
+    const raw = this.previewZoomSelectVal || 'fit';
+    let mode = 'fit';
+    let zoom = 1;
+    if (raw === 'fit') {
+      mode = 'fit';
+      zoom = 1;
+    } else if (raw === 'native') {
+      mode = 'native';
+      zoom = 1;
+    } else {
+      mode = 'scale';
+      const parsed = parseFloat(raw);
+      zoom = (!isNaN(parsed) && parsed > 0) ? parsed : 1;
+    }
+    return {
+      mode,
+      zoom,
+      anchor: this.previewCanvasAnchor || 'center'
+    };
+  }
+
+  sendViewportConfigToPreview() {
+    const config = this.getPreviewViewportPayload();
+    const frame = document.getElementById('preview-frame');
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: 'preview:setViewportConfig', config }, '*');
+    }
+    if (window.electronAPI && window.electronAPI.preview && window.electronAPI.preview.setViewportConfig) {
+      window.electronAPI.preview.setViewportConfig(config).catch(() => {});
+    }
+  }
+
+  stepPreviewZoom(direction = 1) {
+    const steps = ['0.25', '0.5', '0.75', '1', '1.25', '1.5', '2', '3', '4'];
+    const currentVal = this.previewZoomSelectVal || 'fit';
+    let idx = steps.indexOf(currentVal);
+    if (idx === -1) {
+      idx = steps.indexOf('1');
+    }
+    const nextIdx = Math.max(0, Math.min(steps.length - 1, idx + (direction > 0 ? 1 : -1)));
+    this.setPreviewZoomValue(steps[nextIdx]);
+  }
+
+  setPreviewZoomValue(val) {
+    this.previewZoomSelectVal = val || 'fit';
+    try {
+      localStorage.setItem('p5_studio_preview_zoom_val', this.previewZoomSelectVal);
+    } catch (e) {}
+    const selectEl = document.getElementById('select-preview-zoom');
+    if (selectEl && selectEl.value !== this.previewZoomSelectVal) {
+      selectEl.value = this.previewZoomSelectVal;
+    }
+    this.sendViewportConfigToPreview();
+  }
+
+  setPreviewAnchorValue(anchor) {
+    this.previewCanvasAnchor = anchor || 'center';
+    try {
+      localStorage.setItem('p5_studio_preview_anchor', this.previewCanvasAnchor);
+    } catch (e) {}
+    document.querySelectorAll('.btn-canvas-anchor').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.anchor === this.previewCanvasAnchor);
+    });
+    this.sendViewportConfigToPreview();
+  }
+
+  initPreviewViewportControls() {
+    const selectZoom = document.getElementById('select-preview-zoom');
+    const btnZoomOut = document.getElementById('btn-preview-zoom-out');
+    const btnZoomIn = document.getElementById('btn-preview-zoom-in');
+    const btnReset = document.getElementById('btn-preview-zoom-reset');
+    const anchorBtns = document.querySelectorAll('.btn-canvas-anchor');
+
+    if (selectZoom) {
+      selectZoom.value = this.previewZoomSelectVal || 'fit';
+      selectZoom.addEventListener('change', () => {
+        this.setPreviewZoomValue(selectZoom.value);
+      });
+    }
+
+    if (btnZoomOut) {
+      btnZoomOut.addEventListener('click', () => this.stepPreviewZoom(-1));
+    }
+
+    if (btnZoomIn) {
+      btnZoomIn.addEventListener('click', () => this.stepPreviewZoom(1));
+    }
+
+    if (btnReset) {
+      btnReset.addEventListener('click', () => {
+        this.setPreviewZoomValue('fit');
+        this.setPreviewAnchorValue('center');
+      });
+    }
+
+    anchorBtns.forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.anchor === (this.previewCanvasAnchor || 'center'));
+      btn.addEventListener('click', () => {
+        if (btn.dataset.anchor) {
+          this.setPreviewAnchorValue(btn.dataset.anchor);
+        }
+      });
+    });
+
+    this.sendViewportConfigToPreview();
   }
 
   toggleInlinePreviewFullscreen(forceState = null) {

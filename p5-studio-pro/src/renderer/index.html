@@ -289,6 +289,39 @@
             </div>
           </div>
         </div>
+        <div class="preview-viewport-toolbar" id="preview-viewport-toolbar">
+          <div class="preview-zoom-cluster" title="Zoom della Preview (Alt/Cmd/Ctrl + Rotellina Mouse)">
+            <span class="preview-toolbar-label">Zoom</span>
+            <button type="button" id="btn-preview-zoom-out" class="btn-viewport-tool" title="Zoom Out (−)">−</button>
+            <select id="select-preview-zoom" class="preview-zoom-select" title="Livello di Zoom della Preview">
+              <option value="fit" selected>Fit</option>
+              <option value="native">1:1 Nativo</option>
+              <option value="0.25">25%</option>
+              <option value="0.5">50%</option>
+              <option value="0.75">75%</option>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5">150%</option>
+              <option value="2">200%</option>
+              <option value="3">300%</option>
+              <option value="4">400%</option>
+            </select>
+            <button type="button" id="btn-preview-zoom-in" class="btn-viewport-tool" title="Zoom In (+)">+</button>
+            <button type="button" id="btn-preview-zoom-reset" class="btn-viewport-tool btn-viewport-reset" title="Ripristina Zoom Fit & Ancoraggio al Centro">Reset</button>
+          </div>
+          <div class="preview-anchor-cluster" id="preview-anchor-group" title="Ancoraggio del Canvas nella finestra Preview (Centro, Angoli e Bordi)">
+            <span class="preview-toolbar-label">Ancora</span>
+            <button type="button" class="btn-canvas-anchor" data-anchor="top-left" title="Ancora in Alto a Sinistra (Top-Left)">↖</button>
+            <button type="button" class="btn-canvas-anchor" data-anchor="top-center" title="Ancora in Alto al Centro (Top-Center)">↑</button>
+            <button type="button" class="btn-canvas-anchor" data-anchor="top-right" title="Ancora in Alto a Destra (Top-Right)">↗</button>
+            <button type="button" class="btn-canvas-anchor" data-anchor="center-left" title="Ancora al Centro a Sinistra (Center-Left)">←</button>
+            <button type="button" class="btn-canvas-anchor active" data-anchor="center" title="Ancora al Centro (Center)">•</button>
+            <button type="button" class="btn-canvas-anchor" data-anchor="center-right" title="Ancora al Centro a Destra (Center-Right)">→</button>
+            <button type="button" class="btn-canvas-anchor" data-anchor="bottom-left" title="Ancora in Basso a Sinistra (Bottom-Left)">↙</button>
+            <button type="button" class="btn-canvas-anchor" data-anchor="bottom-center" title="Ancora in Basso al Centro (Bottom-Center)">↓</button>
+            <button type="button" class="btn-canvas-anchor" data-anchor="bottom-right" title="Ancora in Basso a Destra (Bottom-Right)">↘</button>
+          </div>
+        </div>
         <div class="preview-viewport-container">
           <iframe id="preview-frame" class="preview-frame" allow="autoplay; microphone; fullscreen" allowfullscreen></iframe>
           <div id="preview-docked-notice" class="preview-docked-notice hidden">

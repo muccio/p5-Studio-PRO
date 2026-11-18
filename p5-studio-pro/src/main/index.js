@@ -1096,6 +1096,12 @@ function setupIPC() {
   ipcMain.handle('preview:toggleFullscreen', () => togglePreviewFullscreen());
   ipcMain.handle('preview:exitFullscreen', () => exitPreviewFullscreen());
   ipcMain.handle('preview:getStatus', () => getPreviewWindowStatus());
+  ipcMain.handle('preview:setViewportConfig', (event, cfg) => {
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.webContents.send('preview:setViewportConfig', cfg);
+    }
+    return true;
+  });
   ipcMain.handle('preview:reload', () => {
     if (previewWindow && !previewWindow.isDestroyed()) {
       previewWindow.webContents.reload();

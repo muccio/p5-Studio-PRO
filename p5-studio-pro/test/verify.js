@@ -907,6 +907,54 @@ await asyncTest('23. Verify Atomic Flush-Save, Cache-Busting, Fullscreen Fix & P
 });
 
 // ----------------------------------------------------
+// 24. Test Preview Viewport Zoom & Canvas Corner/Center Anchoring + p5.FFT-Compatible IDE Audio Hooks
+// ----------------------------------------------------
+test('24. Verify Preview Viewport Zoom & Corner/Center Anchoring and p5.FFT-Compatible IDE Audio Hooks', () => {
+  // 24.1 Preview Viewport Zoom & Corner/Center Anchoring UI
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="preview-viewport-toolbar"'), 'index.html must include preview-viewport-toolbar');
+  assert.ok(htmlSrc.includes('id="select-preview-zoom"'), 'index.html must include select-preview-zoom');
+  assert.ok(htmlSrc.includes('id="btn-preview-zoom-in"'), 'index.html must include btn-preview-zoom-in');
+  assert.ok(htmlSrc.includes('id="btn-preview-zoom-out"'), 'index.html must include btn-preview-zoom-out');
+  assert.ok(htmlSrc.includes('id="btn-preview-zoom-reset"'), 'index.html must include btn-preview-zoom-reset');
+  assert.ok(htmlSrc.includes('data-anchor="top-left"'), 'index.html must include top-left corner anchor');
+  assert.ok(htmlSrc.includes('data-anchor="top-right"'), 'index.html must include top-right corner anchor');
+  assert.ok(htmlSrc.includes('data-anchor="center"'), 'index.html must include center anchor');
+  assert.ok(htmlSrc.includes('data-anchor="bottom-left"'), 'index.html must include bottom-left corner anchor');
+  assert.ok(htmlSrc.includes('data-anchor="bottom-right"'), 'index.html must include bottom-right corner anchor');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('initPreviewViewportControls'), 'main.js must implement initPreviewViewportControls');
+  assert.ok(mainJsSrc.includes('sendViewportConfigToPreview'), 'main.js must implement sendViewportConfigToPreview');
+  assert.ok(mainJsSrc.includes('setPreviewAnchorValue'), 'main.js must implement setPreviewAnchorValue');
+
+  // 24.2 p5.FFT-Compatible IDE Audio Hooks in sandboxRuntime.js & sandboxPreload.cjs
+  const sandboxRuntime = fs.readFileSync(path.join(projectRoot, 'src/main/sandboxRuntime.js'), 'utf-8');
+  assert.ok(sandboxRuntime.includes('class IdeP5FFT'), 'sandboxRuntime.js must define IdeP5FFT class');
+  assert.ok(sandboxRuntime.includes('class IdeP5Amplitude'), 'sandboxRuntime.js must define IdeP5Amplitude class');
+  assert.ok(sandboxRuntime.includes('class IdeP5AudioIn'), 'sandboxRuntime.js must define IdeP5AudioIn class');
+  assert.ok(sandboxRuntime.includes('analyze(bins = 1024'), 'sandboxRuntime.js must implement ideAudio.analyze');
+  assert.ok(sandboxRuntime.includes('waveform(bins = 1024'), 'sandboxRuntime.js must implement ideAudio.waveform');
+  assert.ok(sandboxRuntime.includes('getFFTEnergy(frequency1, frequency2)'), 'sandboxRuntime.js must implement ideAudio.getFFTEnergy');
+  assert.ok(sandboxRuntime.includes('getCentroid()'), 'sandboxRuntime.js must implement ideAudio.getCentroid');
+  assert.ok(sandboxRuntime.includes('linAverages(N = 16)'), 'sandboxRuntime.js must implement ideAudio.linAverages');
+  assert.ok(sandboxRuntime.includes('logAverages(octaveBands)'), 'sandboxRuntime.js must implement ideAudio.logAverages');
+  assert.ok(sandboxRuntime.includes('getOctaveBands('), 'sandboxRuntime.js must implement ideAudio.getOctaveBands');
+  assert.ok(sandboxRuntime.includes('createFFT('), 'sandboxRuntime.js must implement ideAudio.createFFT');
+  assert.ok(sandboxRuntime.includes('enableP5SoundHooks('), 'sandboxRuntime.js must implement ideAudio.enableP5SoundHooks');
+  assert.ok(sandboxRuntime.includes('function applyViewportConfig'), 'sandboxRuntime.js must implement applyViewportConfig');
+
+  const sandboxPreload = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(sandboxPreload.includes('class IdeP5FFT'), 'sandboxPreload.cjs must define IdeP5FFT class');
+  assert.ok(sandboxPreload.includes('analyze(bins = 1024'), 'sandboxPreload.cjs must implement ideAudio.analyze');
+  assert.ok(sandboxPreload.includes('waveform(bins = 1024'), 'sandboxPreload.cjs must implement ideAudio.waveform');
+  assert.ok(sandboxPreload.includes('getFFTEnergy(frequency1, frequency2)'), 'sandboxPreload.cjs must implement ideAudio.getFFTEnergy');
+  assert.ok(sandboxPreload.includes('createFFT('), 'sandboxPreload.cjs must implement ideAudio.createFFT');
+  assert.ok(sandboxPreload.includes('enableP5SoundHooks('), 'sandboxPreload.cjs must implement ideAudio.enableP5SoundHooks');
+  assert.ok(sandboxPreload.includes('function applyViewportConfig'), 'sandboxPreload.cjs must implement applyViewportConfig');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {
