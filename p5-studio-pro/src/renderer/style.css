@@ -1278,6 +1278,56 @@ body.app-container {
   border: none;
 }
 
+/* Inline Fullscreen Preview Overlay */
+.preview-panel.inline-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 99999 !important;
+  background-color: #000 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.preview-panel.inline-fullscreen .preview-header {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 100001;
+  background: rgba(13, 15, 18, 0.82);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 5px 10px;
+  margin: 0;
+  gap: 10px;
+  opacity: 0.25;
+  transition: opacity 0.2s ease;
+}
+.preview-panel.inline-fullscreen .preview-header:hover {
+  opacity: 1;
+}
+.preview-panel.inline-fullscreen .preview-viewport-container {
+  width: 100vw !important;
+  height: 100vh !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* Performance Recorder Button */
+.btn-record-perf .perf-dot {
+  background-color: var(--accent-amber);
+  box-shadow: 0 0 6px var(--accent-amber);
+}
+.btn-record-perf.recording {
+  background-color: rgba(255, 183, 0, 0.2) !important;
+  border-color: var(--accent-amber) !important;
+  color: var(--accent-amber) !important;
+}
+
 /* Audio DSP Meters */
 .visualizer-canvases {
   display: grid;

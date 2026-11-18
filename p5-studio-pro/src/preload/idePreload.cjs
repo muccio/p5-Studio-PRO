@@ -70,6 +70,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setBandRanges: (ranges) => ipcRenderer.invoke('audio:setBandRanges', ranges)
   },
 
+  // --- Isolated Live Performance Recorder & Hook Replay ---
+  performance: {
+    start: (opts) => ipcRenderer.invoke('performance:start', opts),
+    appendChunk: (chunk) => ipcRenderer.invoke('performance:appendChunk', chunk),
+    stop: (opts) => ipcRenderer.invoke('performance:stop', opts),
+    readStream: (streamPath) => ipcRenderer.invoke('performance:readStream', streamPath),
+    saveWav: (perfDir, channelData, sampleRate) =>
+      ipcRenderer.invoke('performance:saveWav', { perfDir, channelData, sampleRate })
+  },
+
   // --- Floating AI Chatbot Browser ---
   chatbot: {
     open: (options) => ipcRenderer.invoke('chatbot:open', options),

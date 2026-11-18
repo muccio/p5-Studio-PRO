@@ -162,6 +162,7 @@ console.clear = function () {
 };
 const exportAudioPath = urlParams.get('audioPath') || null;
 const exportOscPath = urlParams.get('oscPath') || null;
+const exportPerfPath = urlParams.get('perfPath') || null;
 
 if (isLiveMode) {
   // Live Stage Presentation Output styling: zero margins, clean canvas, cursor auto-hiding
@@ -766,9 +767,12 @@ if (isExportMode) {
       installP5ExportHooks(window.p5);
     }
   });
+}
 
-  // Guard p5's shader() to prevent crashes if called before shader sources have finished downloading
-  let _p5Shader = null;
+// Guard p5's shader() in ALL modes (preview, popout, live stage, export)
+// to prevent crashes if called before BOTH vertex & fragment shader sources have finished downloading
+let _p5Shader = null;
+try {
   Object.defineProperty(window, 'shader', {
     configurable: true,
     enumerable: true,
@@ -777,14 +781,14 @@ if (isExportMode) {
     },
     set(fn) {
       _p5Shader = function (s) {
-        if (!s || (s._vertSrc === undefined && s._fragSrc === undefined && !s._glProgram)) {
+        if (!s || ((!s._vertSrc || !s._fragSrc) && !s._glProgram)) {
           return this;
         }
         return fn.apply(this, arguments);
       };
     }
   });
-}
+} catch (e) {}
 
 // =========================================================================
 // 1. Pixel-Perfect WebGL Context & Precision Enforcement
@@ -1708,6 +1712,7 @@ class IdeOscEngine {
 
   bindUniforms(shaderObj, mappingObject) {
     if (!shaderObj || !shaderObj.setUniform) return;
+    if ((!shaderObj._vertSrc || !shaderObj._fragSrc) && !shaderObj._glProgram) return;
     for (const [uniformName, oscConfig] of Object.entries(mappingObject)) {
       const address = Array.isArray(oscConfig) ? oscConfig[0] : oscConfig;
       const defaultVal = Array.isArray(oscConfig) ? oscConfig[1] : 0.0;
@@ -1880,6 +1885,7 @@ class IdeShaderManager {
 
   bindStandardUniforms(shaderObj, p5Instance) {
     if (!shaderObj || !shaderObj.setUniform || !p5Instance) return;
+    if ((!shaderObj._vertSrc || !shaderObj._fragSrc) && !shaderObj._glProgram) return;
 
     // In export mode, strictly enforce target resolution
     const resW = isExportMode ? exportTargetW : (p5Instance.width || window.innerWidth);
@@ -1916,11 +1922,193 @@ class IdeShaderManager {
 }
 
 // =========================================================================
+// 5b. idePerformance: Isolated Performance Hook Replay Engine
+// =========================================================================
+class IdePerformanceReplayEngine {
+  constructor() {
+    this.isActive = false;
+    this.streamData = null;
+    this.frames = [];
+    this.events = [];
+    this.eventCursor = 0;
+    this.activeDownKeys = new Set();
+    this._hooksInstalled = false;
+  }
+
+  loadOfflineStream(streamJson) {
+    if (!streamJson || typeof streamJson !== 'object') return false;
+    this.streamData = streamJson;
+    this.frames = Array.isArray(streamJson.frames) ? streamJson.frames : [];
+    this.events = Array.isArray(streamJson.events) ? streamJson.events : [];
+    this.frames.sort((a, b) => (a.tMs || 0) - (b.tMs || 0));
+    this.events.sort((a, b) => (a.tMs || 0) - (b.tMs || 0));
+    this.eventCursor = 0;
+    this.isActive = this.frames.length > 0 || this.events.length > 0;
+    console.log(`[idePerformance] Loaded performance stream: ${this.frames.length} frames, ${this.events.length} events`);
+    return this.isActive;
+  }
+
+  installReplayHooks(p5Instance) {
+    if (!this.isActive || this._hooksInstalled) return;
+    this._hooksInstalled = true;
+    const self = this;
+
+    const hookedKeyIsDown = function (code) {
+      return self.activeDownKeys.has(Number(code));
+    };
+
+    if (p5Instance) {
+      p5Instance.keyIsDown = hookedKeyIsDown;
+    }
+    window.keyIsDown = hookedKeyIsDown;
+  }
+
+  _findFrameAtTime(timeMs) {
+    if (this.frames.length === 0) return null;
+    if (timeMs <= this.frames[0].tMs) return this.frames[0];
+    if (timeMs >= this.frames[this.frames.length - 1].tMs) return this.frames[this.frames.length - 1];
+
+    // Binary search for closest recorded frame <= timeMs
+    let lo = 0;
+    let hi = this.frames.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const midT = this.frames[mid].tMs || 0;
+      if (midT <= timeMs) {
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const idx = Math.max(0, hi);
+    const f0 = this.frames[idx];
+    const f1 = this.frames[Math.min(this.frames.length - 1, idx + 1)];
+    if (!f1 || f1 === f0 || f1.tMs <= f0.tMs) return f0;
+
+    // Linear interpolation for smooth sub-frame mouse motion across arbitrary export FPS
+    const alpha = Math.max(0, Math.min(1, (timeMs - f0.tMs) / (f1.tMs - f0.tMs)));
+    return {
+      ...f0,
+      nMouseX: (f0.nMouseX || 0) + ((f1.nMouseX || 0) - (f0.nMouseX || 0)) * alpha,
+      nMouseY: (f0.nMouseY || 0) + ((f1.nMouseY || 0) - (f0.nMouseY || 0)) * alpha,
+      nPmouseX: (f0.nPmouseX || 0) + ((f1.nPmouseX || 0) - (f0.nPmouseX || 0)) * alpha,
+      nPmouseY: (f0.nPmouseY || 0) + ((f1.nPmouseY || 0) - (f0.nPmouseY || 0)) * alpha,
+      rms: (f0.rms || 0) + ((f1.rms || 0) - (f0.rms || 0)) * alpha,
+      bands: {
+        sub: (f0.bands?.sub || 0) + ((f1.bands?.sub || 0) - (f0.bands?.sub || 0)) * alpha,
+        bass: (f0.bands?.bass || 0) + ((f1.bands?.bass || 0) - (f0.bands?.bass || 0)) * alpha,
+        lowMid: (f0.bands?.lowMid || 0) + ((f1.bands?.lowMid || 0) - (f0.bands?.lowMid || 0)) * alpha,
+        mid: (f0.bands?.mid || 0) + ((f1.bands?.mid || 0) - (f0.bands?.mid || 0)) * alpha,
+        highMid: (f0.bands?.highMid || 0) + ((f1.bands?.highMid || 0) - (f0.bands?.highMid || 0)) * alpha,
+        treble: (f0.bands?.treble || 0) + ((f1.bands?.treble || 0) - (f0.bands?.treble || 0)) * alpha
+      }
+    };
+  }
+
+  _setProp(p5Instance, key, val) {
+    if (p5Instance) {
+      if (typeof p5Instance._setProperty === 'function') {
+        try { p5Instance._setProperty(key, val); } catch (e) { p5Instance[key] = val; }
+      } else {
+        p5Instance[key] = val;
+      }
+    }
+    try { window[key] = val; } catch (e) {}
+  }
+
+  applyFrameAtTime(timeMs, p5Instance, targetW, targetH, hasDecodedAudioPcm = false) {
+    if (!this.isActive) return;
+    this.installReplayHooks(p5Instance);
+
+    const snap = this._findFrameAtTime(timeMs);
+    if (snap) {
+      const mx = (typeof snap.nMouseX === 'number')
+        ? snap.nMouseX * targetW
+        : ((snap.mouseX || 0) * (targetW / Math.max(1, snap.w || targetW)));
+      const my = (typeof snap.nMouseY === 'number')
+        ? snap.nMouseY * targetH
+        : ((snap.mouseY || 0) * (targetH / Math.max(1, snap.h || targetH)));
+      const pmx = (typeof snap.nPmouseX === 'number')
+        ? snap.nPmouseX * targetW
+        : ((snap.pmouseX || 0) * (targetW / Math.max(1, snap.w || targetW)));
+      const pmy = (typeof snap.nPmouseY === 'number')
+        ? snap.nPmouseY * targetH
+        : ((snap.pmouseY || 0) * (targetH / Math.max(1, snap.h || targetH)));
+
+      this._setProp(p5Instance, 'mouseX', mx);
+      this._setProp(p5Instance, 'mouseY', my);
+      this._setProp(p5Instance, 'pmouseX', pmx);
+      this._setProp(p5Instance, 'pmouseY', pmy);
+      this._setProp(p5Instance, 'movedX', mx - pmx);
+      this._setProp(p5Instance, 'movedY', my - pmy);
+      this._setProp(p5Instance, 'mouseIsPressed', Boolean(snap.mouseIsPressed));
+      this._setProp(p5Instance, 'mouseButton', snap.mouseButton || 'left');
+      this._setProp(p5Instance, 'keyIsPressed', Boolean(snap.keyIsPressed));
+      if (snap.key !== undefined) this._setProp(p5Instance, 'key', snap.key);
+      if (snap.keyCode !== undefined) this._setProp(p5Instance, 'keyCode', snap.keyCode);
+
+      this.activeDownKeys.clear();
+      if (Array.isArray(snap.downKeys)) {
+        for (const k of snap.downKeys) this.activeDownKeys.add(Number(k));
+      }
+
+      // Apply recorded OSC snapshot
+      if (snap.osc && window.ideOSC) {
+        for (const [addr, args] of Object.entries(snap.osc)) {
+          window.ideOSC._dispatch(addr, Array.isArray(args) ? args : [args]);
+        }
+      }
+
+      // If no external WAV/PCM was decoded, drive ideAudio metrics directly from recorded performance snapshot
+      if (!hasDecodedAudioPcm && window.ideAudio) {
+        window.ideAudio.currentRMS = Number(snap.rms || 0);
+        if (snap.bands) {
+          Object.assign(window.ideAudio.bands, snap.bands);
+        }
+      }
+    }
+
+    // Fire discrete input callbacks scheduled up to current timeMs
+    while (this.eventCursor < this.events.length && (this.events[this.eventCursor].tMs || 0) <= timeMs) {
+      const evt = this.events[this.eventCursor++];
+      this._fireDiscreteCallback(evt, p5Instance);
+    }
+  }
+
+  _fireDiscreteCallback(evt, p5Instance) {
+    if (!evt || !evt.type) return;
+    if (evt.key !== undefined) this._setProp(p5Instance, 'key', evt.key);
+    if (evt.keyCode !== undefined) this._setProp(p5Instance, 'keyCode', evt.keyCode);
+    if (evt.button !== undefined) this._setProp(p5Instance, 'mouseButton', evt.button);
+
+    const fn = (p5Instance && typeof p5Instance[evt.type] === 'function')
+      ? p5Instance[evt.type].bind(p5Instance)
+      : (typeof window[evt.type] === 'function' ? window[evt.type].bind(window) : null);
+
+    if (fn) {
+      try {
+        fn({
+          delta: evt.delta || 0,
+          deltaX: evt.deltaX || 0,
+          deltaY: evt.deltaY || 0,
+          key: evt.key || '',
+          keyCode: evt.keyCode || 0,
+          preventDefault: () => {}
+        });
+      } catch (err) {
+        console.warn(`[idePerformance] Error in replayed ${evt.type} callback:`, err);
+      }
+    }
+  }
+}
+
+// =========================================================================
 // 6. Instantiate and Expose Globals
 // =========================================================================
 window.ideAudio = new IdeAudioEngine();
 window.ideOSC = new IdeOscEngine();
 window.ideShader = new IdeShaderManager();
+window.idePerformance = new IdePerformanceReplayEngine();
 
 // Automatically start live audio when user clicks or runs sketch
 window.addEventListener('DOMContentLoaded', () => {
@@ -2050,6 +2238,27 @@ if (isExportMode) {
       }
     }
 
+    // Load recorded Live Performance stream if provided (isolated hook-based replay mode)
+    if (exportPerfPath) {
+      try {
+        let perfJson = null;
+        if (ipcRenderer) {
+          perfJson = await ipcRenderer.invoke('performance:readStream', exportPerfPath);
+        }
+        if (!perfJson) {
+          perfJson = await fetch(exportPerfPath).then((r) => r.json());
+        }
+        if (perfJson && window.idePerformance) {
+          window.idePerformance.loadOfflineStream(perfJson);
+          if (perfJson.meta && perfJson.meta.bandRanges && window.ideAudio) {
+            window.ideAudio.setBandRanges(perfJson.meta.bandRanges);
+          }
+        }
+      } catch (err) {
+        console.warn('[Sandbox] Failed to load export Performance Stream JSON:', err);
+      }
+    }
+
     // Ensure all registered shaders have finished downloading their GLSL sources
     if (window.ideShader && window.ideShader.activeShaders) {
       for (const record of window.ideShader.activeShaders) {
@@ -2162,6 +2371,17 @@ if (isExportMode) {
 
       // 2. Replay OSC events for this virtual time
       window.ideOSC.updateOfflineTime(currentExportTimeMs);
+
+      // 2b. If Performance Hook Replay Mode is active, apply recorded mouse/keyboard/events/DSP hooks
+      if (window.idePerformance && window.idePerformance.isActive) {
+        window.idePerformance.applyFrameAtTime(
+          currentExportTimeMs,
+          p5Instance,
+          W,
+          H,
+          Boolean(window.ideAudio && window.ideAudio.offlinePcm)
+        );
+      }
 
       // 3. Trigger deterministic frame redraw
       if (p5Instance) {

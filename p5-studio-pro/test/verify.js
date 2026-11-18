@@ -4,6 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import { ProjectManager, P5_SOUND_V2_CDN_URL } from '../src/main/projectManager.js';
+import { PerformanceManager } from '../src/main/performanceManager.js';
 import { OscBridge } from '../src/main/oscBridge.js';
 import { FfmpegExporter, EXPORT_PROFILES, decodeAudioFileToFloat32, getAudioDurationSec } from '../src/main/ffmpegExporter.js';
 
@@ -843,6 +844,66 @@ test('22. Verify Monaco Editor Find & Find/Replace Support (edcore.main + UI But
   const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
   assert.ok(htmlSrc.includes('id="btn-editor-find"'), 'index.html must include btn-editor-find button');
   assert.ok(htmlSrc.includes('id="btn-editor-replace"'), 'index.html must include btn-editor-replace button');
+});
+
+// ----------------------------------------------------
+// 23. Test Flush-Save Guarantee, Fullscreen Stability & Isolated Performance Recording / Replay Hooks
+// ----------------------------------------------------
+await asyncTest('23. Verify Atomic Flush-Save, Cache-Busting, Fullscreen Fix & Performance Hook Replay', async () => {
+  // 23.1 Flush-Save & Cache-Busting
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('async flushPendingSave()'), 'main.js must implement flushPendingSave()');
+  assert.ok(mainJsSrc.includes('this.dirtyFiles'), 'main.js must track dirtyFiles per model');
+  assert.ok(mainJsSrc.includes('toggleInlinePreviewFullscreen'), 'main.js must implement toggleInlinePreviewFullscreen');
+
+  const projMgrSrc = fs.readFileSync(path.join(projectRoot, 'src/main/projectManager.js'), 'utf-8');
+  assert.ok(projMgrSrc.includes('?v=${cbVersion}'), 'projectManager.js must cache-bust local relative scripts/styles on HTML serve');
+
+  // 23.2 Fullscreen & WebGL Shader Guard in All Modes
+  const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainIndexSrc.includes('disable-renderer-backgrounding'), 'main/index.js must use app commandLine switch instead of per-window backgroundThrottling:false that freezes macOS simpleFullScreen');
+  assert.ok(mainIndexSrc.includes("'performance:start'"), 'main/index.js must handle performance:start IPC');
+  assert.ok(mainIndexSrc.includes("'performance:readStream'"), 'main/index.js must handle performance:readStream IPC');
+
+  const sandboxPreloadSrc = fs.readFileSync(path.join(projectRoot, 'src/preload/sandboxPreload.cjs'), 'utf-8');
+  assert.ok(sandboxPreloadSrc.includes('(!s._vertSrc || !s._fragSrc) && !s._glProgram'), 'sandboxPreload.cjs must guard shader() when either vertSrc OR fragSrc is still loading');
+  assert.ok(sandboxPreloadSrc.includes('IdePerformanceReplayEngine'), 'sandboxPreload.cjs must implement isolated IdePerformanceReplayEngine');
+
+  // 23.3 Isolated PerformanceManager Round-Trip Test
+  const tmpProj = path.join(projectRoot, '.test_perf_proj');
+  fs.rmSync(tmpProj, { recursive: true, force: true });
+  fs.mkdirSync(tmpProj, { recursive: true });
+  const pm = new ProjectManager(tmpProj);
+  const perfMgr = new PerformanceManager(pm);
+
+  try {
+    const startRes = perfMgr.startSession({ takeName: 'unit_perf', meta: { fps: 60 } });
+    assert.strictEqual(startRes.status, 'recording');
+
+    perfMgr.appendChunk({
+      frames: [
+        { tMs: 0, frame: 0, mouseX: 100, mouseY: 150, nMouseX: 0.25, nMouseY: 0.5, mouseIsPressed: false, rms: 0.12 },
+        { tMs: 16.67, frame: 1, mouseX: 200, mouseY: 250, nMouseX: 0.5, nMouseY: 0.75, mouseIsPressed: true, rms: 0.45 }
+      ],
+      events: [
+        { tMs: 10, type: 'mousePressed', button: 'left' },
+        { tMs: 15, type: 'keyPressed', key: 'a', keyCode: 65 }
+      ]
+    });
+
+    const stopRes = perfMgr.stopSession({ durationSec: 1.5 });
+    assert.strictEqual(stopRes.status, 'saved');
+    assert.strictEqual(stopRes.frameCount, 2);
+    assert.strictEqual(stopRes.eventCount, 2);
+    assert.ok(fs.existsSync(stopRes.streamPath), 'perf_stream.json must be written to disk');
+
+    const loaded = await perfMgr.readStreamFile(stopRes.streamPath);
+    assert.strictEqual(loaded.type, 'p5-studio-performance-stream');
+    assert.strictEqual(loaded.frames.length, 2);
+    assert.strictEqual(loaded.events[1].key, 'a');
+  } finally {
+    fs.rmSync(tmpProj, { recursive: true, force: true });
+  }
 });
 
 // ----------------------------------------------------

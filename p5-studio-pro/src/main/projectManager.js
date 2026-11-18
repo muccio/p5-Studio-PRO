@@ -173,7 +173,9 @@ export class ProjectManager extends EventEmitter {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
     res.setHeader('Timing-Allow-Origin', '*');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
@@ -317,6 +319,16 @@ export class ProjectManager extends EventEmitter {
             `$1${P5_SOUND_V2_CDN_URL}$3`
           );
         }
+        // Cache-bust local relative .js and .css files so Chromium Blink MemoryCache never serves stale code on reload
+        const cbVersion = Date.now();
+        html = html.replace(
+          /(<script\s+[^>]*src=["'])(?!https?:\/\/|\/sandboxRuntime\.js|\/__sandboxRuntime\.js)([^"'?#]+\.js)(["'])/gi,
+          `$1$2?v=${cbVersion}$3`
+        );
+        html = html.replace(
+          /(<link\s+[^>]*href=["'])(?!https?:\/\/)([^"'?#]+\.css)(["'])/gi,
+          `$1$2?v=${cbVersion}$3`
+        );
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
         return;
@@ -340,7 +352,13 @@ export class ProjectManager extends EventEmitter {
       this.watcher = fs.watch(this.projectPath, { recursive: true }, (eventType, filename) => {
         if (!filename) return;
         // Ignore internal files
-        if (filename.startsWith('.') || filename.includes('node_modules') || filename.includes('.takes') || filename.includes('.live_buffer')) {
+        if (
+          filename.startsWith('.') ||
+          filename.includes('node_modules') ||
+          filename.includes('.takes') ||
+          filename.includes('.performances') ||
+          filename.includes('.live_buffer')
+        ) {
           return;
         }
 
@@ -402,8 +420,14 @@ export class ProjectManager extends EventEmitter {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
 
     for (const entry of entries) {
-      // Ignore hidden files, node_modules, .takes, and .live_buffer
-      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.takes' || entry.name === '.live_buffer') {
+      // Ignore hidden files, node_modules, .takes, .performances, and .live_buffer
+      if (
+        entry.name.startsWith('.') ||
+        entry.name === 'node_modules' ||
+        entry.name === '.takes' ||
+        entry.name === '.performances' ||
+        entry.name === '.live_buffer'
+      ) {
         continue;
       }
 
@@ -455,6 +479,7 @@ export class ProjectManager extends EventEmitter {
           entry.name.startsWith('.') ||
           entry.name === 'node_modules' ||
           entry.name === '.takes' ||
+          entry.name === '.performances' ||
           entry.name === '.live_buffer'
         ) {
           continue;

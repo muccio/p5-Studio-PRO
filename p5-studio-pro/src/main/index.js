@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { ProjectManager } from './projectManager.js';
 import { OscBridge } from './oscBridge.js';
 import { FfmpegExporter, decodeAudioFileToFloat32, getAudioDurationSec } from './ffmpegExporter.js';
+import { PerformanceManager } from './performanceManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,9 @@ app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('allow-file-access-from-files');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 let mainWindow = null;
 let exportWindow = null;
@@ -27,6 +31,7 @@ let chatbotWindow = null;
 let projectManager = null;
 let oscBridge = null;
 let ffmpegExporter = null;
+let performanceManager = null;
 let activeAudioBandRanges = null;
 
 function getProdPath() {
@@ -296,8 +301,8 @@ async function openLiveWindow(options = {}) {
     height: bounds ? bounds.height : 720,
     x: bounds ? bounds.x : undefined,
     y: bounds ? bounds.y : undefined,
-    fullscreen: !!options.fullscreen,
-    simpleFullScreen: process.platform === 'darwin',
+    fullscreen: Boolean(options.fullscreen && process.platform !== 'darwin'),
+    simpleFullScreen: Boolean(options.fullscreen && process.platform === 'darwin'),
     fullscreenable: true,
     alwaysOnTop: !!options.alwaysOnTop,
     backgroundColor: '#000000',
@@ -307,7 +312,6 @@ async function openLiveWindow(options = {}) {
       preload: path.join(__dirname, '../preload/sandboxPreload.cjs'),
       contextIsolation: false,
       nodeIntegration: false,
-      backgroundThrottling: false, // Critical: uninterrupted 60 FPS while typing in IDE!
       webSecurity: false
     }
   });
@@ -379,14 +383,21 @@ function moveLiveWindowToDisplay(displayId, fullscreen = false) {
 
 function toggleLiveFullscreen() {
   if (liveWindow && !liveWindow.isDestroyed()) {
-    const isFs = process.platform === 'darwin' ? liveWindow.isSimpleFullScreen() : liveWindow.isFullScreen();
+    const isFs = process.platform === 'darwin'
+      ? (liveWindow.isSimpleFullScreen() || liveWindow.isFullScreen())
+      : liveWindow.isFullScreen();
     const nextState = !isFs;
     if (process.platform === 'darwin') {
       liveWindow.setSimpleFullScreen(nextState);
     } else {
       liveWindow.setFullScreen(nextState);
+      liveWindow.setMenuBarVisibility(!nextState);
     }
-    liveWindow.setMenuBarVisibility(!nextState);
+    setTimeout(() => {
+      if (liveWindow && !liveWindow.isDestroyed()) {
+        liveWindow.webContents.executeJavaScript('window.dispatchEvent(new Event("resize"))').catch(() => {});
+      }
+    }, 80);
     notifyLiveStatus();
     return nextState;
   }
@@ -396,10 +407,17 @@ function toggleLiveFullscreen() {
 function exitLiveFullscreen() {
   if (liveWindow && !liveWindow.isDestroyed()) {
     if (process.platform === 'darwin') {
-      liveWindow.setSimpleFullScreen(false);
+      if (liveWindow.isSimpleFullScreen()) liveWindow.setSimpleFullScreen(false);
+      if (liveWindow.isFullScreen()) liveWindow.setFullScreen(false);
     } else {
       liveWindow.setFullScreen(false);
+      liveWindow.setMenuBarVisibility(true);
     }
+    setTimeout(() => {
+      if (liveWindow && !liveWindow.isDestroyed()) {
+        liveWindow.webContents.executeJavaScript('window.dispatchEvent(new Event("resize"))').catch(() => {});
+      }
+    }, 80);
     notifyLiveStatus();
     return false;
   }
@@ -452,14 +470,12 @@ async function openPreviewWindow() {
     minHeight: 300,
     backgroundColor: '#0a0d14',
     autoHideMenuBar: true,
-    simpleFullScreen: process.platform === 'darwin',
     fullscreenable: true,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/sandboxPreload.cjs'),
       contextIsolation: false,
       nodeIntegration: false,
-      backgroundThrottling: false,
       webSecurity: false
     }
   });
@@ -490,14 +506,21 @@ async function openPreviewWindow() {
 
 function togglePreviewFullscreen() {
   if (previewWindow && !previewWindow.isDestroyed()) {
-    const isFs = process.platform === 'darwin' ? previewWindow.isSimpleFullScreen() : previewWindow.isFullScreen();
+    const isFs = process.platform === 'darwin'
+      ? (previewWindow.isSimpleFullScreen() || previewWindow.isFullScreen())
+      : previewWindow.isFullScreen();
     const nextState = !isFs;
     if (process.platform === 'darwin') {
       previewWindow.setSimpleFullScreen(nextState);
     } else {
       previewWindow.setFullScreen(nextState);
+      previewWindow.setMenuBarVisibility(!nextState);
     }
-    previewWindow.setMenuBarVisibility(!nextState);
+    setTimeout(() => {
+      if (previewWindow && !previewWindow.isDestroyed()) {
+        previewWindow.webContents.executeJavaScript('window.dispatchEvent(new Event("resize"))').catch(() => {});
+      }
+    }, 80);
     notifyPreviewStatus();
     return nextState;
   }
@@ -507,10 +530,17 @@ function togglePreviewFullscreen() {
 function exitPreviewFullscreen() {
   if (previewWindow && !previewWindow.isDestroyed()) {
     if (process.platform === 'darwin') {
-      previewWindow.setSimpleFullScreen(false);
+      if (previewWindow.isSimpleFullScreen()) previewWindow.setSimpleFullScreen(false);
+      if (previewWindow.isFullScreen()) previewWindow.setFullScreen(false);
     } else {
       previewWindow.setFullScreen(false);
+      previewWindow.setMenuBarVisibility(true);
     }
+    setTimeout(() => {
+      if (previewWindow && !previewWindow.isDestroyed()) {
+        previewWindow.webContents.executeJavaScript('window.dispatchEvent(new Event("resize"))').catch(() => {});
+      }
+    }, 80);
     notifyPreviewStatus();
     return false;
   }
@@ -1126,6 +1156,58 @@ function setupIPC() {
     }
   });
 
+  // --- Isolated Live Performance Recording & Hook Replay IPC ---
+  ipcMain.handle('performance:start', (event, opts) => {
+    return performanceManager ? performanceManager.startSession(opts) : null;
+  });
+  ipcMain.handle('performance:appendChunk', (event, chunk) => {
+    return performanceManager ? performanceManager.appendChunk(chunk) : null;
+  });
+  ipcMain.handle('performance:stop', (event, opts) => {
+    return performanceManager ? performanceManager.stopSession(opts) : null;
+  });
+  ipcMain.handle('performance:readStream', async (event, streamPath) => {
+    return performanceManager ? await performanceManager.readStreamFile(streamPath) : null;
+  });
+  ipcMain.handle('performance:saveWav', async (event, { perfDir, channelData, sampleRate }) => {
+    if (!perfDir) return { success: false };
+    if (!fs.existsSync(perfDir)) {
+      fs.mkdirSync(perfDir, { recursive: true });
+    }
+    const wavPath = path.join(perfDir, 'perf_audio.wav');
+    const numChannels = channelData.length;
+    const numSamples = channelData[0].length;
+    const bytesPerSample = 4;
+    const blockAlign = numChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = numSamples * blockAlign;
+    const buffer = Buffer.alloc(44 + dataSize);
+
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + dataSize, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(3, 20);
+    buffer.writeUInt16LE(numChannels, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(byteRate, 28);
+    buffer.writeUInt16LE(blockAlign, 32);
+    buffer.writeUInt16LE(32, 34);
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(dataSize, 40);
+
+    let offset = 44;
+    for (let i = 0; i < numSamples; i++) {
+      for (let ch = 0; ch < numChannels; ch++) {
+        buffer.writeFloatLE(channelData[ch][i], offset);
+        offset += 4;
+      }
+    }
+    fs.writeFileSync(wavPath, buffer);
+    return { success: true, path: wavPath };
+  });
+
   // --- Compiler Diagnostics Relay to Main Editor ---
   ipcMain.handle('shader:reportDiagnostics', (event, { errors }) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1179,6 +1261,7 @@ async function startDeterministicExport(options) {
     outputPath,
     audioPath = null,
     oscPath = null,
+    perfPath = null,
     profile = 'h264-master',
     bandRanges = null
   } = options;
@@ -1230,7 +1313,8 @@ async function startDeterministicExport(options) {
 
   // Query parameters instruct sandboxPreload to run in deterministic offline export mode
   const bandParam = effectiveBandRanges ? `&bandRanges=${encodeURIComponent(JSON.stringify(effectiveBandRanges))}` : '';
-  const exportUrl = `${projectManager.getServerUrl()}/index.html?export=true&w=${width}&h=${height}&fps=${fps}&totalFrames=${totalFrames}&audioPath=${encodeURIComponent(audioPath || '')}&oscPath=${encodeURIComponent(oscPath || '')}${bandParam}`;
+  const perfParam = perfPath ? `&perfPath=${encodeURIComponent(perfPath)}` : '';
+  const exportUrl = `${projectManager.getServerUrl()}/index.html?export=true&w=${width}&h=${height}&fps=${fps}&totalFrames=${totalFrames}&audioPath=${encodeURIComponent(audioPath || '')}&oscPath=${encodeURIComponent(oscPath || '')}${perfParam}${bandParam}`;
 
   console.log(`[Export] Loading offline lockstep sketch: ${exportUrl}`);
   await exportWindow.loadURL(exportUrl);
@@ -1315,6 +1399,7 @@ app.whenReady().then(async () => {
   await oscBridge.start();
 
   ffmpegExporter = new FfmpegExporter();
+  performanceManager = new PerformanceManager(projectManager);
 
   // Watch for project file changes and notify renderer / preview
   // Note: liveWindow is strictly isolated via swap buffer and only updates on explicit push!

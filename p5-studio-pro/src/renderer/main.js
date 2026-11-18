@@ -6,6 +6,7 @@ import 'monaco-editor/esm/vs/language/css/monaco.contribution';
 import 'monaco-editor/esm/vs/language/typescript/monaco.contribution';
 import { setupGLSLSupport, setModelDiagnostics, clearModelDiagnostics, isShaderFile } from './glslMonacoSetup.js';
 import { setupWebAndScriptSupport, P5_REFERENCE_DOCS, getCategoryForSymbol } from './ideLanguageService.js';
+import { PerformanceController } from './performanceController.js';
 
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
@@ -100,11 +101,15 @@ class IDEApp {
     this.isApplyingExternalChange = false;
     this.lastUserEditTime = 0;
     this.lastSavedContentByFile = new Map();
+    this.dirtyFiles = new Set();
 
     // Console & Debug panel state
     this.consoleEntries = [];
     this.consoleFilter = 'all';
     this.consoleAutoClear = localStorage.getItem('p5_studio_console_autoclear') !== 'false';
+
+    // Isolated Performance Recorder Controller
+    this.performanceController = new PerformanceController(this);
   }
 
   async init() {
@@ -118,6 +123,7 @@ class IDEApp {
     this.initConsoleControls();
     this.initLiveWindowControls();
     this.initChatbotBrowserControls();
+    this.performanceController.initUI();
 
     // Check & request macOS system microphone permission early
     if (window.electronAPI && window.electronAPI.system && window.electronAPI.system.requestMicrophoneAccess) {
@@ -297,25 +303,22 @@ class IDEApp {
     this.editor.onDidChangeModelContent(() => {
       if (!this.activeFilePath || this.isApplyingExternalChange) return;
 
+      const changedPath = this.activeFilePath.replace(/\\/g, '/');
+      this.dirtyFiles.add(changedPath);
       this.lastUserEditTime = Date.now();
       if (this.pendingSaveTimer) clearTimeout(this.pendingSaveTimer);
 
       this.pendingSaveTimer = setTimeout(async () => {
         this.pendingSaveTimer = null;
+        await this.flushPendingSave();
         if (!this.activeFilePath) return;
 
         const targetPath = this.activeFilePath.replace(/\\/g, '/');
-        const content = this.editor.getValue();
-        this.lastSavedContentByFile.set(targetPath, content);
+        const fileRecord = this.openFiles.get(targetPath);
+        const content = (fileRecord && fileRecord.model && !fileRecord.model.isDisposed())
+          ? fileRecord.model.getValue()
+          : (this.editor ? this.editor.getValue() : '');
 
-        this.isSavingFile = true;
-        try {
-          if (window.electronAPI) {
-            await window.electronAPI.project.writeFile(targetPath, content);
-          }
-        } finally {
-          this.isSavingFile = false;
-        }
         this.validateActiveShader();
 
         // Update preview dynamically
@@ -335,12 +338,9 @@ class IDEApp {
         } else if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
           const isSyntaxValid = this.validateActiveScript(content);
           if (isSyntaxValid) {
-            this.restartPreview();
-            if (window.electronAPI) {
-              if (window.electronAPI.preview) window.electronAPI.preview.reload();
-              if (this.isLiveWindowOpen) {
-                this.setLiveStageDirty(true, 'code');
-              }
+            await this.restartPreview();
+            if (this.isLiveWindowOpen) {
+              this.setLiveStageDirty(true, 'code');
             }
           } else {
             // Fault-tolerant Live Coding: keep previous working canvas alive!
@@ -349,15 +349,12 @@ class IDEApp {
             }
           }
         } else if (['html', 'htm', 'css', 'json'].includes(ext)) {
-          this.restartPreview();
-          if (window.electronAPI) {
-            if (window.electronAPI.preview) window.electronAPI.preview.reload();
-            if (this.isLiveWindowOpen) {
-              this.setLiveStageDirty(true, 'code');
-            }
+          await this.restartPreview();
+          if (this.isLiveWindowOpen) {
+            this.setLiveStageDirty(true, 'code');
           }
         }
-      }, 400);
+      }, 320);
     });
 
     // Window resize handler
@@ -368,6 +365,44 @@ class IDEApp {
     // Prevent accidental drag-drop navigation across IDE workspace
     window.addEventListener('dragover', (e) => e.preventDefault());
     window.addEventListener('drop', (e) => e.preventDefault());
+  }
+
+  async flushPendingSave() {
+    if (this.pendingSaveTimer) {
+      clearTimeout(this.pendingSaveTimer);
+      this.pendingSaveTimer = null;
+    }
+    if (!window.electronAPI || !window.electronAPI.project) return false;
+
+    const filesToSave = new Set(this.dirtyFiles);
+    if (this.activeFilePath) {
+      filesToSave.add(this.activeFilePath.replace(/\\/g, '/'));
+    }
+
+    let wroteAny = false;
+    this.isSavingFile = true;
+    try {
+      for (const filePath of filesToSave) {
+        const record = this.openFiles.get(filePath);
+        if (!record || !record.model || record.model.isDisposed()) {
+          this.dirtyFiles.delete(filePath);
+          continue;
+        }
+        const currentContent = record.model.getValue();
+        const lastSaved = this.lastSavedContentByFile.get(filePath);
+        if (this.dirtyFiles.has(filePath) || currentContent !== lastSaved) {
+          this.lastSavedContentByFile.set(filePath, currentContent);
+          await window.electronAPI.project.writeFile(filePath, currentContent);
+          this.dirtyFiles.delete(filePath);
+          wroteAny = true;
+        }
+      }
+    } catch (err) {
+      console.error('[IDE] Failed to flush save:', err);
+    } finally {
+      this.isSavingFile = false;
+    }
+    return wroteAny;
   }
 
   async openFile(relativePath) {
@@ -422,6 +457,7 @@ class IDEApp {
 
     if (this.activeFilePath && this.openFiles.has(this.activeFilePath)) {
       this.openFiles.get(this.activeFilePath).viewState = this.editor.saveViewState();
+      this.flushPendingSave();
     }
 
     this.activeFilePath = relativePath;
@@ -538,15 +574,18 @@ class IDEApp {
     if (!model) return true;
 
     try {
-      if (/^\s*(import|export)\s/m.test(code)) {
-        const testCode = code
-          .replace(/^\s*export\s+default\s+/gm, 'let __def = ')
-          .replace(/^\s*export\s+(const|let|var|function|class)\s+/gm, '$1 ')
-          .replace(/^\s*export\s*\{[^}]*\}\s*;?/gm, '')
-          .replace(/^\s*import\s+.*?from\s+['"][^'"]+['"]\s*;?/gm, '');
+      const testCode = /^\s*(import|export)\s/m.test(code)
+        ? code
+            .replace(/^\s*export\s+default\s+/gm, 'let __def = ')
+            .replace(/^\s*export\s+(const|let|var|function|class)\s+/gm, '$1 ')
+            .replace(/^\s*export\s*\{[^}]*\}\s*;?/gm, '')
+            .replace(/^\s*import\s+.*?from\s+['"][^'"]+['"]\s*;?/gm, '')
+        : code;
+      try {
         new Function(testCode);
-      } else {
-        new Function(code);
+      } catch (syncErr) {
+        const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+        new AsyncFunction(testCode);
       }
 
       this.hasJsErrors = false;
@@ -842,6 +881,10 @@ class IDEApp {
         }
       } else if (data.type === 'audio:update') {
         this.latestAudioMetrics = data;
+      } else if (data.type === 'preview:toggleInlineFullscreen') {
+        this.toggleInlinePreviewFullscreen();
+      } else if (data.type === 'preview:exitInlineFullscreen') {
+        this.exitInlinePreviewFullscreen();
       }
     });
 
@@ -854,7 +897,29 @@ class IDEApp {
     });
   }
 
-  restartPreview() {
+  toggleInlinePreviewFullscreen(forceState = null) {
+    const panel = document.querySelector('.preview-panel');
+    const label = document.getElementById('label-inline-fs');
+    if (!panel) return;
+    const next = typeof forceState === 'boolean' ? forceState : !panel.classList.contains('inline-fullscreen');
+    panel.classList.toggle('inline-fullscreen', next);
+    if (label) label.textContent = next ? 'Exit Fullscreen' : 'Fullscreen';
+    setTimeout(() => {
+      const frame = document.getElementById('preview-frame');
+      if (frame && frame.contentWindow) {
+        try {
+          frame.contentWindow.dispatchEvent(new Event('resize'));
+        } catch (e) {}
+      }
+    }, 50);
+  }
+
+  exitInlinePreviewFullscreen() {
+    this.toggleInlinePreviewFullscreen(false);
+  }
+
+  async restartPreview() {
+    await this.flushPendingSave();
     this.hasJsErrors = false;
     if (this.consoleAutoClear) {
       this.clearConsole();
@@ -870,10 +935,24 @@ class IDEApp {
       diagSpan.className = 'diagnostic-clean';
       diagSpan.textContent = 'Ready';
     }
+    if ((!this.projectInfo || !this.projectInfo.serverUrl) && window.electronAPI && window.electronAPI.project) {
+      try {
+        this.projectInfo = await window.electronAPI.project.getInfo();
+      } catch (e) {}
+    }
     const frame = document.getElementById('preview-frame');
     if (frame) {
       if (this.projectInfo && this.projectInfo.serverUrl) {
-        frame.src = `${this.projectInfo.serverUrl}/index.html?t=${Date.now()}`;
+        const nextUrl = `${this.projectInfo.serverUrl}/index.html?t=${Date.now()}`;
+        try {
+          if (frame.contentWindow && frame.contentWindow.location) {
+            frame.contentWindow.location.replace(nextUrl);
+          } else {
+            frame.src = nextUrl;
+          }
+        } catch (e) {
+          frame.src = nextUrl;
+        }
       } else {
         frame.src = frame.src;
       }
@@ -1632,20 +1711,35 @@ class IDEApp {
       this.recordedSampleCount = 0;
 
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      this.audioContext = new AudioContextClass({ sampleRate: 48000 });
+      this.audioContext = new AudioContextClass();
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume().catch(() => {});
+      }
 
       await this.audioContext.audioWorklet.addModule('./audioWorkletRecorder.js');
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 48000
-        }
-      });
+      const audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      };
+      if (this.currentAudioDeviceId && this.currentAudioDeviceId !== 'default') {
+        audioConstraints.deviceId = { ideal: this.currentAudioDeviceId };
+      }
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      } catch (e) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
 
       const source = this.audioContext.createMediaStreamSource(stream);
+      const gainNode = this.audioContext.createGain();
+      gainNode.gain.value = this.currentAudioGain || 1.0;
+      const silentDest = this.audioContext.createGain();
+      silentDest.gain.value = 0.0;
+
       this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-worklet-recorder');
 
       this.workletNode.port.onmessage = (event) => {
@@ -1657,7 +1751,10 @@ class IDEApp {
         }
       };
 
-      source.connect(this.workletNode);
+      source.connect(gainNode);
+      gainNode.connect(this.workletNode);
+      this.workletNode.connect(silentDest);
+      silentDest.connect(this.audioContext.destination);
       this.workletNode.port.postMessage({ command: 'start' });
     } catch (err) {
       console.error('[TakeRecorder] Failed to start audio worklet:', err);
@@ -1735,6 +1832,7 @@ class IDEApp {
   }
 
   async startLockstepExport() {
+    await this.flushPendingSave();
     const preset = document.getElementById('export-preset-select').value.split('x');
     const width = parseInt(preset[0], 10);
     const height = parseInt(preset[1], 10);
@@ -1743,6 +1841,8 @@ class IDEApp {
     const profile = document.getElementById('export-profile-select').value;
     const audioPath = document.getElementById('export-audio-path').value || null;
     const oscPath = document.getElementById('export-osc-path').value || null;
+    const perfInput = document.getElementById('export-perf-path');
+    const perfPath = (perfInput && perfInput.value) ? perfInput.value : null;
 
     const ext = profile === 'prores-4444-alpha' ? 'mov' : 'mp4';
     const outputPath = await window.electronAPI.export.showSaveDialog({
@@ -1766,6 +1866,7 @@ class IDEApp {
       outputPath,
       audioPath,
       oscPath,
+      perfPath,
       bandRanges: this.currentBandRanges
     });
   }
@@ -1927,6 +2028,7 @@ class IDEApp {
       return;
     }
 
+    await this.flushPendingSave();
     const activeCode = this.editor ? this.editor.getValue() : '';
     const isJsSyntaxValid = this.validateActiveScript(activeCode);
 
@@ -2789,11 +2891,26 @@ class IDEApp {
   }
 
   initEventListeners() {
-    // Global hotkeys: Cmd+Enter / Ctrl+Enter (Push Live Stage), Cmd+O / Ctrl+O (Open Project), Cmd+Shift+N (New Project), Cmd+F (Find), Cmd+Alt+F / Ctrl+H (Replace)
-    window.addEventListener('keydown', (e) => {
+    // Global hotkeys: Cmd+Enter / Ctrl+Enter (Push Live Stage), Cmd+S (Flush Save & Update), Cmd+R (Restart Sketch), Cmd+O (Open Project), Cmd+Shift+N (New Project), Cmd+F (Find), Cmd+Alt+F / Ctrl+H (Replace), Escape (Exit Inline Fullscreen)
+    window.addEventListener('keydown', async (e) => {
+      if (e.key === 'Escape') {
+        this.exitInlinePreviewFullscreen();
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
-        this.pushToLiveStage();
+        await this.pushToLiveStage();
+      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        await this.flushPendingSave();
+        await this.restartPreview();
+        const diagSpan = document.getElementById('status-diagnostics');
+        if (diagSpan && !this.hasShaderErrors && !this.hasJsErrors) {
+          diagSpan.className = 'diagnostic-clean';
+          diagSpan.textContent = 'Salvato e aggiornato ✓';
+        }
+      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        await this.restartPreview();
       } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
         const btnNew = document.getElementById('btn-new-project');
@@ -2814,6 +2931,11 @@ class IDEApp {
         this.triggerEditorReplace();
       }
     });
+
+    const btnInlineFs = document.getElementById('btn-preview-inline-fullscreen');
+    if (btnInlineFs) {
+      btnInlineFs.addEventListener('click', () => this.toggleInlinePreviewFullscreen());
+    }
 
     const btnEditorFind = document.getElementById('btn-editor-find');
     if (btnEditorFind) {

@@ -669,6 +669,7 @@
 
     bindUniforms(shaderObj, mappingObject) {
       if (!shaderObj || !shaderObj.setUniform) return;
+      if ((!shaderObj._vertSrc || !shaderObj._fragSrc) && !shaderObj._glProgram) return;
       for (const [uniformName, oscConfig] of Object.entries(mappingObject)) {
         const address = Array.isArray(oscConfig) ? oscConfig[0] : oscConfig;
         const defaultVal = Array.isArray(oscConfig) ? oscConfig[1] : 0.0;
@@ -807,6 +808,7 @@
 
     bindStandardUniforms(shaderObj, p5Instance) {
       if (!shaderObj || !shaderObj.setUniform || !p5Instance) return;
+      if ((!shaderObj._vertSrc || !shaderObj._fragSrc) && !shaderObj._glProgram) return;
 
       shaderObj.setUniform('u_resolution', [p5Instance.width, p5Instance.height]);
       shaderObj.setUniform('u_time', p5Instance.millis() / 1000.0);
@@ -832,12 +834,172 @@
     }
   }
 
+  // =========================================================================
+  // 5b. idePerformance: Passive Live Performance Stream Recorder
+  // =========================================================================
+  class IdePerformanceEngine {
+    constructor() {
+      this.isRecording = false;
+      this.startTimePerf = 0;
+      this.frameIndex = 0;
+      this.pendingFrames = [];
+      this.pendingEvents = [];
+      this.downKeys = new Set();
+      this.flushInterval = null;
+      this._rafId = null;
+      this._bindDOMCapture();
+    }
+
+    _nowRelMs() {
+      return Math.max(0, Math.round((performance.now() - this.startTimePerf) * 100) / 100);
+    }
+
+    _bindDOMCapture() {
+      const pushEvt = (eventType, payload = {}) => {
+        if (!this.isRecording) return;
+        this.pendingEvents.push({
+          tMs: this._nowRelMs(),
+          type: eventType,
+          ...payload
+        });
+      };
+
+      window.addEventListener('mousedown', (e) => {
+        const btn = e.button === 0 ? 'left' : (e.button === 2 ? 'right' : 'center');
+        pushEvt('mousePressed', { button: btn, clientX: e.clientX, clientY: e.clientY });
+      }, { passive: true });
+
+      window.addEventListener('mouseup', (e) => {
+        const btn = e.button === 0 ? 'left' : (e.button === 2 ? 'right' : 'center');
+        pushEvt('mouseReleased', { button: btn, clientX: e.clientX, clientY: e.clientY });
+      }, { passive: true });
+
+      window.addEventListener('click', (e) => {
+        pushEvt('mouseClicked', { clientX: e.clientX, clientY: e.clientY });
+      }, { passive: true });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!this.isRecording) return;
+        const type = e.buttons > 0 ? 'mouseDragged' : 'mouseMoved';
+        pushEvt(type, { clientX: e.clientX, clientY: e.clientY });
+      }, { passive: true });
+
+      window.addEventListener('wheel', (e) => {
+        pushEvt('mouseWheel', { delta: e.deltaY, deltaX: e.deltaX, deltaY: e.deltaY });
+      }, { passive: true });
+
+      window.addEventListener('keydown', (e) => {
+        this.downKeys.add(e.keyCode || e.which || 0);
+        pushEvt('keyPressed', { key: e.key, keyCode: e.keyCode || e.which || 0 });
+        if (e.key && e.key.length === 1) {
+          pushEvt('keyTyped', { key: e.key, keyCode: e.keyCode || e.which || 0 });
+        }
+      }, { passive: true });
+
+      window.addEventListener('keyup', (e) => {
+        this.downKeys.delete(e.keyCode || e.which || 0);
+        pushEvt('keyReleased', { key: e.key, keyCode: e.keyCode || e.which || 0 });
+      }, { passive: true });
+    }
+
+    startRecording() {
+      if (this.isRecording) return;
+      this.isRecording = true;
+      this.startTimePerf = performance.now();
+      this.frameIndex = 0;
+      this.pendingFrames = [];
+      this.pendingEvents = [];
+
+      const captureFrame = () => {
+        if (!this.isRecording) return;
+        const p = window.p5Instance || window._p5Instance || window;
+        const cW = Number(p.width || window.innerWidth || 1280);
+        const cH = Number(p.height || window.innerHeight || 720);
+        const mx = Number(p.mouseX || 0);
+        const my = Number(p.mouseY || 0);
+        const pmx = Number(p.pmouseX || 0);
+        const pmy = Number(p.pmouseY || 0);
+
+        const oscObj = {};
+        if (window.ideOSC && window.ideOSC.values) {
+          for (const [k, v] of window.ideOSC.values.entries()) {
+            oscObj[k] = v;
+          }
+        }
+
+        const audio = window.ideAudio;
+        this.pendingFrames.push({
+          tMs: this._nowRelMs(),
+          frame: this.frameIndex++,
+          w: cW,
+          h: cH,
+          mouseX: mx,
+          mouseY: my,
+          pmouseX: pmx,
+          pmouseY: pmy,
+          nMouseX: cW > 0 ? mx / cW : 0,
+          nMouseY: cH > 0 ? my / cH : 0,
+          nPmouseX: cW > 0 ? pmx / cW : 0,
+          nPmouseY: cH > 0 ? pmy / cH : 0,
+          movedX: Number(p.movedX || (mx - pmx)),
+          movedY: Number(p.movedY || (my - pmy)),
+          mouseIsPressed: Boolean(p.mouseIsPressed),
+          mouseButton: String(p.mouseButton || 'left'),
+          keyIsPressed: Boolean(p.keyIsPressed || this.downKeys.size > 0),
+          key: String(p.key || ''),
+          keyCode: Number(p.keyCode || 0),
+          downKeys: Array.from(this.downKeys),
+          rms: audio ? Number(audio.currentRMS || 0) : 0,
+          bands: audio ? { ...audio.bands } : { sub: 0, bass: 0, lowMid: 0, mid: 0, highMid: 0, treble: 0 },
+          osc: oscObj
+        });
+
+        this._rafId = window.requestAnimationFrame(captureFrame);
+      };
+
+      this._rafId = window.requestAnimationFrame(captureFrame);
+      this.flushInterval = setInterval(() => this.flush(), 250);
+    }
+
+    flush() {
+      if (this.pendingFrames.length === 0 && this.pendingEvents.length === 0) return;
+      const frames = this.pendingFrames.splice(0, this.pendingFrames.length);
+      const events = this.pendingEvents.splice(0, this.pendingEvents.length);
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'perf:chunk',
+          frames,
+          events,
+          meta: {
+            sourceWidth: Number((window.p5Instance || window).width || window.innerWidth || 1280),
+            sourceHeight: Number((window.p5Instance || window).height || window.innerHeight || 720)
+          }
+        }, '*');
+      }
+    }
+
+    stopRecording() {
+      if (!this.isRecording) return;
+      this.isRecording = false;
+      if (this._rafId) {
+        window.cancelAnimationFrame(this._rafId);
+        this._rafId = null;
+      }
+      if (this.flushInterval) {
+        clearInterval(this.flushInterval);
+        this.flushInterval = null;
+      }
+      this.flush();
+    }
+  }
+
   // Expose Globals
   window.ideAudio = new IdeAudioEngine();
   window.ideOSC = new IdeOscEngine();
   window.ideShader = new IdeShaderManager();
+  window.idePerformance = new IdePerformanceEngine();
 
-  // Guard p5's shader() to prevent crashes if called before shader sources have finished downloading
+  // Guard p5's shader() to prevent crashes if called before BOTH vertex and fragment shader sources have finished downloading
   let _p5Shader = null;
   Object.defineProperty(window, 'shader', {
     configurable: true,
@@ -847,7 +1009,7 @@
     },
     set(fn) {
       _p5Shader = function (s) {
-        if (!s || (s._vertSrc === undefined && s._fragSrc === undefined && !s._glProgram)) {
+        if (!s || ((!s._vertSrc || !s._fragSrc) && !s._glProgram)) {
           return this;
         }
         return fn.apply(this, arguments);
@@ -1034,12 +1196,36 @@
       if (window.noLoop && typeof window.noLoop === 'function') window.noLoop();
     } else if (data.type === 'sketch:resume') {
       if (window.loop && typeof window.loop === 'function') window.loop();
+    } else if (data.type === 'perf:startRecord') {
+      if (window.idePerformance) window.idePerformance.startRecording();
+    } else if (data.type === 'perf:stopRecord') {
+      if (window.idePerformance) window.idePerformance.stopRecording();
     } else if (data.type === 'console:eval' && typeof data.expr === 'string') {
       try {
         const result = (0, eval)(data.expr);
         pushConsoleEntry('result', [`← ${formatConsoleArg(result, 0)}`]);
       } catch (err) {
         pushConsoleEntry('error', [`${err.name || 'Error'}: ${err.message}`]);
+      }
+    }
+  });
+
+  // Double-click or F11 / Escape inside embedded preview toggles full-window preview mode
+  window.addEventListener('dblclick', (e) => {
+    if (e.target && e.target.closest && e.target.closest('#studio-sandbox-error-overlay')) return;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'preview:toggleInlineFullscreen' }, '*');
+    }
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'F11') {
+      e.preventDefault();
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'preview:toggleInlineFullscreen' }, '*');
+      }
+    } else if (e.key === 'Escape') {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'preview:exitInlineFullscreen' }, '*');
       }
     }
   });
