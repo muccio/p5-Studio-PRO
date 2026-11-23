@@ -550,6 +550,99 @@ body.app-container {
   color: #00ff88;
 }
 
+/* Syphon (macOS) / Spout (Windows) GPU Broadcast Cluster */
+.syphon-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.btn-syphon {
+  background-color: rgba(180, 90, 255, 0.1);
+  border-color: rgba(180, 90, 255, 0.35);
+  color: var(--text-main);
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.btn-syphon:hover {
+  background-color: rgba(180, 90, 255, 0.2);
+  border-color: #b45aff;
+  box-shadow: 0 0 10px rgba(180, 90, 255, 0.25);
+}
+
+.btn-syphon.active {
+  background-color: rgba(180, 90, 255, 0.24);
+  border-color: #c87dff;
+  color: #e2b8ff;
+  box-shadow: 0 0 12px rgba(180, 90, 255, 0.45);
+}
+
+.syphon-led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #444c56;
+  display: inline-block;
+  transition: all 0.2s ease;
+}
+
+.btn-syphon.active .syphon-led {
+  background-color: #d188ff;
+  box-shadow: 0 0 8px #d188ff;
+  animation: pulse-live 1.2s infinite alternate;
+}
+
+.btn-syphon-cfg {
+  background-color: rgba(180, 90, 255, 0.08);
+  border: 1px solid rgba(180, 90, 255, 0.32);
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  color: var(--text-muted);
+  padding: 5px 6px;
+  height: 29px;
+}
+
+.btn-syphon-cfg:hover {
+  background-color: rgba(180, 90, 255, 0.2);
+  border-color: #b45aff;
+  color: #e2b8ff;
+}
+
+.syphon-status-card {
+  background: rgba(12, 16, 26, 0.85);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.syphon-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.syphon-status-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.syphon-servers-list {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent-cyan);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Popout Preview & Dock Notice */
 .preview-header-actions {
   display: flex;
@@ -2506,4 +2599,104 @@ body.app-container {
   fill: var(--accent-cyan);
   flex-shrink: 0;
   margin-top: 1px;
+}
+
+/* GitHub Version & Update Checker Banner and Modal */
+.btn-version-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.btn-version-badge.has-update {
+  background: rgba(0, 255, 136, 0.16);
+  border-color: #00ff88;
+  color: #00ff88;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+}
+
+.update-notification-banner {
+  position: fixed;
+  bottom: 34px;
+  right: 18px;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  max-width: 520px;
+  background: rgba(14, 22, 34, 0.96);
+  backdrop-filter: blur(10px);
+  border: 1px solid #00ff88;
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65), 0 0 16px rgba(0, 255, 136, 0.2);
+}
+
+.update-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(0, 255, 136, 0.2);
+  color: #00ff88;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.update-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-main);
+}
+
+.update-banner-text span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.update-notes-box {
+  margin-top: 12px;
+  background: rgba(8, 11, 18, 0.9);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.update-notes-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  margin-bottom: 6px;
+}
+
+.update-notes-pre {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+  line-height: 1.45;
+  margin: 0;
 }

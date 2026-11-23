@@ -959,6 +959,56 @@ test('24. Verify Preview Viewport Zoom & Corner/Center Anchoring and p5.FFT-Comp
 });
 
 // ----------------------------------------------------
+// 25. Test Syphon (macOS Metal) & Spout (Windows D3D11) Zero-Copy GPU Live Stage Transmitter
+// ----------------------------------------------------
+test('25. Verify Hardware GPU Syphon (macOS) & Spout (Windows) Live Stage Transmitter', () => {
+  const syphonMgrPath = path.join(projectRoot, 'src/main/syphonSpoutManager.js');
+  assert.ok(fs.existsSync(syphonMgrPath), 'src/main/syphonSpoutManager.js must exist');
+  const syphonMgrSrc = fs.readFileSync(syphonMgrPath, 'utf-8');
+  assert.ok(syphonMgrSrc.includes('export class SyphonSpoutManager'), 'syphonSpoutManager.js must export SyphonSpoutManager');
+  assert.ok(syphonMgrSrc.includes('useSharedTexture: true'), 'syphonSpoutManager.js must use zero-copy GPU useSharedTexture');
+  assert.ok(syphonMgrSrc.includes('sendSurface('), 'syphonSpoutManager.js must call sendSurface for macOS Syphon Metal IOSurface');
+  assert.ok(syphonMgrSrc.includes('this.sender.send('), 'syphonSpoutManager.js must call sender.send for Windows Spout DXGI NT handle');
+
+  const mainIndexSrc = fs.readFileSync(path.join(projectRoot, 'src/main/index.js'), 'utf-8');
+  assert.ok(mainIndexSrc.includes("'syphon:getStatus'"), 'main/index.js must handle syphon:getStatus');
+  assert.ok(mainIndexSrc.includes("'syphon:start'"), 'main/index.js must handle syphon:start');
+  assert.ok(mainIndexSrc.includes("'syphon:stop'"), 'main/index.js must handle syphon:stop');
+  assert.ok(mainIndexSrc.includes("'syphon:toggle'"), 'main/index.js must handle syphon:toggle');
+
+  const preloadCjsSrc = fs.readFileSync(path.join(projectRoot, 'src/preload/idePreload.cjs'), 'utf-8');
+  assert.ok(preloadCjsSrc.includes('syphon: {'), 'idePreload.cjs must expose syphon API');
+
+  const htmlSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf-8');
+  assert.ok(htmlSrc.includes('id="btn-toggle-syphon"'), 'index.html must include btn-toggle-syphon');
+  assert.ok(htmlSrc.includes('id="btn-syphon-settings"'), 'index.html must include btn-syphon-settings');
+  assert.ok(htmlSrc.includes('id="syphon-modal"'), 'index.html must include syphon-modal');
+
+  const mainJsSrc = fs.readFileSync(path.join(projectRoot, 'src/renderer/main.js'), 'utf-8');
+  assert.ok(mainJsSrc.includes('initSyphonSpoutControls'), 'main.js must implement initSyphonSpoutControls');
+  assert.ok(mainJsSrc.includes('updateSyphonUI'), 'main.js must implement updateSyphonUI');
+  assert.ok(mainJsSrc.includes('isLiveOutputActive()'), 'main.js must implement isLiveOutputActive');
+
+  // 25.2 Verify Default Sketch Minimal Template, OSC Minimal Sample & GitHub Version Update Checker
+  const defaultSketchJs = fs.readFileSync(path.join(projectRoot, 'templates/default-sketch/sketch.js'), 'utf-8');
+  assert.ok(defaultSketchJs.includes('ideAudio.createFFT(0.8, 256)'), 'default-sketch/sketch.js must use the minimal ideAudio.createFFT boilerplate');
+  assert.ok(defaultSketchJs.includes("ideAudio.loadAudio('./track.mp3', true)"), 'default-sketch/sketch.js must use ideAudio.loadAudio minimal boilerplate');
+
+  const oscSamplePath = path.join(projectRoot, 'templates/sample-osc-minimal.js');
+  assert.ok(fs.existsSync(oscSamplePath), 'templates/sample-osc-minimal.js must exist');
+  const oscSampleSrc = fs.readFileSync(oscSamplePath, 'utf-8');
+  assert.ok(oscSampleSrc.includes('ideOSC.get(') && oscSampleSrc.includes('ideOSC.on(') && oscSampleSrc.includes('ideOSC.send('), 'sample-osc-minimal.js must demonstrate ideOSC.get, ideOSC.on, and ideOSC.send');
+
+  assert.ok(mainIndexSrc.includes("'system:checkForUpdates'"), 'main/index.js must handle system:checkForUpdates');
+  assert.ok(mainIndexSrc.includes('checkForGitHubUpdates'), 'main/index.js must implement checkForGitHubUpdates');
+  assert.ok(preloadCjsSrc.includes('checkForUpdates:'), 'idePreload.cjs must expose system.checkForUpdates');
+  assert.ok(htmlSrc.includes('id="btn-check-updates"'), 'index.html must include btn-check-updates');
+  assert.ok(htmlSrc.includes('id="update-notification-banner"'), 'index.html must include update-notification-banner');
+  assert.ok(htmlSrc.includes('id="update-modal"'), 'index.html must include update-modal');
+  assert.ok(mainJsSrc.includes('initVersionUpdateChecker'), 'main.js must implement initVersionUpdateChecker');
+});
+
+// ----------------------------------------------------
 // Summary
 // ----------------------------------------------------
 setTimeout(() => {

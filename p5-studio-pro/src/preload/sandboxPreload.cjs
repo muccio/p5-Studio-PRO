@@ -1328,9 +1328,6 @@ class IdeAudioEngine {
       this.analyser.fftSize = this.fftSize;
       this.analyser.smoothingTimeConstant = this.smoothingTimeConstant;
     }
-    if (this.gainNode) {
-      this.gainNode.gain.value = 0.0;
-    }
 
     let audioEl = null;
     let mediaSourceNode = null;
@@ -1346,10 +1343,23 @@ class IdeAudioEngine {
     if (audioEl) {
       if (!audioEl.__ideSourceNode) {
         audioEl.__ideSourceNode = this.audioCtx.createMediaElementSource(audioEl);
+        audioEl.addEventListener('playing', () => {
+          if (this.gainNode) this.gainNode.gain.value = 0.0;
+        });
+        const restoreMic = () => {
+          if (this.gainNode) this.gainNode.gain.value = this.inputGain;
+        };
+        audioEl.addEventListener('pause', restoreMic);
+        audioEl.addEventListener('ended', restoreMic);
+        audioEl.addEventListener('error', restoreMic);
+      }
+      if (!audioEl.paused && !audioEl.error && this.gainNode) {
+        this.gainNode.gain.value = 0.0;
       }
       mediaSourceNode = audioEl.__ideSourceNode;
     } else if (typeof AudioNode !== 'undefined' && audioSource instanceof AudioNode) {
       mediaSourceNode = audioSource;
+      if (this.gainNode) this.gainNode.gain.value = 0.0;
     }
 
     if (mediaSourceNode) {

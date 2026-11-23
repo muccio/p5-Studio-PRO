@@ -6,6 +6,7 @@ import { ProjectManager } from './projectManager.js';
 import { OscBridge } from './oscBridge.js';
 import { FfmpegExporter, decodeAudioFileToFloat32, getAudioDurationSec } from './ffmpegExporter.js';
 import { PerformanceManager } from './performanceManager.js';
+import { SyphonSpoutManager } from './syphonSpoutManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +33,7 @@ let projectManager = null;
 let oscBridge = null;
 let ffmpegExporter = null;
 let performanceManager = null;
+let syphonSpoutManager = null;
 let activeAudioBandRanges = null;
 
 function getProdPath() {
@@ -46,7 +48,7 @@ function getProdPath() {
   return candidates[0];
 }
 
-function resolveDefaultSketchPath() {
+function resolveBundledTemplatePath() {
   const candidateTemplateDirs = [
     path.join(process.resourcesPath || '', 'app.asar.unpacked/templates/default-sketch'),
     path.resolve(__dirname, '../../templates/default-sketch'),
@@ -55,13 +57,16 @@ function resolveDefaultSketchPath() {
     path.resolve(__dirname, '../../../templates/default-sketch')
   ];
 
-  let templateDir = null;
   for (const c of candidateTemplateDirs) {
     if (c && fs.existsSync(c) && fs.existsSync(path.join(c, 'sketch.js'))) {
-      templateDir = c;
-      break;
+      return c;
     }
   }
+  return path.resolve(__dirname, '../../templates/default-sketch');
+}
+
+function resolveDefaultSketchPath() {
+  const templateDir = resolveBundledTemplatePath();
 
   // When packaged, copy default sketch to userData so it is writable and persistent
   if (app.isPackaged || (templateDir && templateDir.includes('app.asar'))) {
@@ -85,7 +90,88 @@ function resolveDefaultSketchPath() {
     }
   }
 
-  return templateDir || path.resolve(__dirname, '../../templates/default-sketch');
+  return templateDir;
+}
+
+function compareSemver(a, b) {
+  const clean = (v) => String(v || '0.0.0').replace(/^v/i, '').trim().split('-')[0];
+  const pa = clean(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = clean(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+async function checkForGitHubUpdates() {
+  const currentVersion = app.getVersion() || '1.7.0';
+  const repoUrl = 'https://github.com/muccio/p5-Studio-PRO';
+  const apiUrl = 'https://api.github.com/repos/muccio/p5-Studio-PRO/releases/latest';
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    const res = await fetch(apiUrl, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `p5-Studio-PRO/${currentVersion}`
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      throw new Error(`GitHub API HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const latestTag = String(data.tag_name || '').trim();
+    const latestVersion = latestTag.replace(/^v/i, '') || currentVersion;
+    const hasUpdate = compareSemver(latestVersion, currentVersion) > 0;
+    const assets = Array.isArray(data.assets) ? data.assets : [];
+
+    // Find best matching installer for current platform and CPU architecture
+    let matchedAsset = null;
+    if (process.platform === 'darwin') {
+      if (process.arch === 'arm64') {
+        matchedAsset = assets.find((a) => a.name && a.name.endsWith('-arm64.dmg'));
+      } else {
+        matchedAsset = assets.find((a) => a.name && a.name.endsWith('.dmg') && !a.name.includes('arm64'));
+      }
+      if (!matchedAsset) matchedAsset = assets.find((a) => a.name && a.name.endsWith('.dmg'));
+    } else if (process.platform === 'win32') {
+      matchedAsset =
+        assets.find((a) => a.name && a.name.toLowerCase().includes('setup') && a.name.endsWith('.exe')) ||
+        assets.find((a) => a.name && a.name.endsWith('.exe'));
+    }
+
+    return {
+      checked: true,
+      currentVersion,
+      latestVersion,
+      latestTag: latestTag || `v${latestVersion}`,
+      hasUpdate,
+      releaseTitle: data.name || `p5-Studio-PRO v${latestVersion}`,
+      releaseNotes: data.body || '',
+      releaseUrl: data.html_url || `${repoUrl}/releases/latest`,
+      downloadUrl: matchedAsset ? matchedAsset.browser_download_url : (data.html_url || `${repoUrl}/releases/latest`),
+      assetName: matchedAsset ? matchedAsset.name : null,
+      publishedAt: data.published_at || null
+    };
+  } catch (err) {
+    return {
+      checked: false,
+      currentVersion,
+      latestVersion: currentVersion,
+      hasUpdate: false,
+      releaseUrl: `${repoUrl}/releases/latest`,
+      downloadUrl: `${repoUrl}/releases/latest`,
+      error: err.message
+    };
+  }
 }
 
 // =========================================================================
@@ -249,6 +335,7 @@ async function createMainWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    if (syphonSpoutManager) syphonSpoutManager.stop(false);
     if (liveWindow && !liveWindow.isDestroyed()) liveWindow.close();
     if (previewWindow && !previewWindow.isDestroyed()) previewWindow.close();
     if (chatbotWindow && !chatbotWindow.isDestroyed()) chatbotWindow.close();
@@ -793,30 +880,28 @@ function setupIPC() {
 
     fs.mkdirSync(targetDir, { recursive: true });
 
-    // Copy boilerplate files from default sketch template
-    const templateDir = resolveDefaultSketchPath();
-    const copyRecursive = (src, dest) => {
-      const entries = fs.readdirSync(src, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.live_buffer' || entry.name === '.takes') {
-          continue;
-        }
-        const srcPath = path.join(src, entry.name);
-        const destPath = path.join(dest, entry.name);
-        if (entry.isDirectory()) {
-          fs.mkdirSync(destPath, { recursive: true });
-          copyRecursive(srcPath, destPath);
-        } else {
-          fs.copyFileSync(srcPath, destPath);
-        }
+    // Copy clean basic boilerplate files from bundled default-sketch template
+    const templateDir = resolveBundledTemplatePath();
+    const basicFiles = ['index.html', 'sketch.js', 'project.json', 'p5.min.js'];
+    for (const fileName of basicFiles) {
+      const srcPath = path.join(templateDir, fileName);
+      const destPath = path.join(targetDir, fileName);
+      if (fs.existsSync(srcPath)) {
+        fs.copyFileSync(srcPath, destPath);
       }
-    };
-
-    copyRecursive(templateDir, targetDir);
-    console.log(`[Main] Created new p5.js boilerplate project at: ${targetDir}`);
+    }
+    console.log(`[Main] Created new basic p5.js project at: ${targetDir}`);
 
     // Switch workspace to the new project immediately
     return await switchActiveProject(targetDir);
+  });
+
+  // --- System Version & GitHub Release Update Checker IPC ---
+  ipcMain.handle('system:getAppVersion', () => {
+    return app.getVersion() || '1.7.0';
+  });
+  ipcMain.handle('system:checkForUpdates', async () => {
+    return await checkForGitHubUpdates();
   });
 
   ipcMain.handle('project:listFiles', () => {
@@ -916,7 +1001,7 @@ function setupIPC() {
     return oscBridge.stopRecording();
   });
 
-  // Forward incoming OSC messages to renderer, export, live stage, and preview
+  // Forward incoming OSC messages to renderer, export, live stage, syphon/spout, and preview
   oscBridge.onMessage((msg) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('osc:message', msg);
@@ -926,6 +1011,9 @@ function setupIPC() {
     }
     if (liveWindow && !liveWindow.isDestroyed()) {
       liveWindow.webContents.send('osc:message', msg);
+    }
+    if (syphonSpoutManager && syphonSpoutManager.isActive) {
+      syphonSpoutManager.forwardIPC('osc:message', msg);
     }
     if (previewWindow && !previewWindow.isDestroyed()) {
       previewWindow.webContents.send('osc:message', msg);
@@ -1064,29 +1152,71 @@ function setupIPC() {
   ipcMain.handle('live:exitFullscreen', () => exitLiveFullscreen());
   ipcMain.handle('live:toggleAlwaysOnTop', () => toggleLiveAlwaysOnTop());
   ipcMain.handle('live:pushStage', () => {
-    if (liveWindow && !liveWindow.isDestroyed()) {
+    let pushed = false;
+    if ((liveWindow && !liveWindow.isDestroyed()) || (syphonSpoutManager && syphonSpoutManager.isActive)) {
       projectManager.commitToLiveBuffer();
+    }
+    if (liveWindow && !liveWindow.isDestroyed()) {
       liveWindow.webContents.send('shader:hotReload');
       liveWindow.webContents.reload();
-      return true;
+      pushed = true;
     }
-    return false;
+    if (syphonSpoutManager && syphonSpoutManager.isActive) {
+      syphonSpoutManager.notifyShaderHotReload();
+      syphonSpoutManager.reload();
+      pushed = true;
+    }
+    return pushed;
   });
   ipcMain.handle('live:reload', () => {
-    if (liveWindow && !liveWindow.isDestroyed()) {
+    let reloaded = false;
+    if ((liveWindow && !liveWindow.isDestroyed()) || (syphonSpoutManager && syphonSpoutManager.isActive)) {
       projectManager.commitToLiveBuffer();
-      liveWindow.webContents.reload();
-      return true;
     }
-    return false;
+    if (liveWindow && !liveWindow.isDestroyed()) {
+      liveWindow.webContents.reload();
+      reloaded = true;
+    }
+    if (syphonSpoutManager && syphonSpoutManager.isActive) {
+      syphonSpoutManager.reload();
+      reloaded = true;
+    }
+    return reloaded;
   });
   ipcMain.handle('live:notifyShaderHotReload', () => {
-    if (liveWindow && !liveWindow.isDestroyed()) {
+    let notified = false;
+    if ((liveWindow && !liveWindow.isDestroyed()) || (syphonSpoutManager && syphonSpoutManager.isActive)) {
       projectManager.commitToLiveBuffer();
-      liveWindow.webContents.send('shader:hotReload');
-      return true;
     }
-    return false;
+    if (liveWindow && !liveWindow.isDestroyed()) {
+      liveWindow.webContents.send('shader:hotReload');
+      notified = true;
+    }
+    if (syphonSpoutManager && syphonSpoutManager.isActive) {
+      syphonSpoutManager.notifyShaderHotReload();
+      notified = true;
+    }
+    return notified;
+  });
+
+  // --- Syphon (macOS) / Spout (Windows) Hardware GPU Live Stage Transmitter IPC ---
+  ipcMain.handle('syphon:getStatus', () => {
+    return syphonSpoutManager ? syphonSpoutManager.getStatus() : { supported: false, isActive: false };
+  });
+  ipcMain.handle('syphon:start', async (event, options) => {
+    return syphonSpoutManager ? await syphonSpoutManager.start(options) : { supported: false, isActive: false };
+  });
+  ipcMain.handle('syphon:stop', () => {
+    return syphonSpoutManager ? syphonSpoutManager.stop(true) : { supported: false, isActive: false };
+  });
+  ipcMain.handle('syphon:toggle', async (event, options) => {
+    return syphonSpoutManager ? await syphonSpoutManager.toggle(options) : { supported: false, isActive: false };
+  });
+  ipcMain.handle('syphon:updateConfig', async (event, options) => {
+    return syphonSpoutManager ? await syphonSpoutManager.updateConfig(options) : { supported: false, isActive: false };
+  });
+  ipcMain.handle('syphon:listServers', () => {
+    return syphonSpoutManager ? syphonSpoutManager.listAvailableServers() : [];
   });
 
   // --- Separate / Popout Preview Window IPC ---
@@ -1122,6 +1252,9 @@ function setupIPC() {
     activeAudioBandRanges = ranges || null;
     if (liveWindow && !liveWindow.isDestroyed()) {
       liveWindow.webContents.send('audio:setBandRanges', ranges);
+    }
+    if (syphonSpoutManager && syphonSpoutManager.isActive) {
+      syphonSpoutManager.forwardIPC('audio:setBandRanges', ranges);
     }
     if (previewWindow && !previewWindow.isDestroyed()) {
       previewWindow.webContents.send('audio:setBandRanges', ranges);
@@ -1406,6 +1539,15 @@ app.whenReady().then(async () => {
 
   ffmpegExporter = new FfmpegExporter();
   performanceManager = new PerformanceManager(projectManager);
+  syphonSpoutManager = new SyphonSpoutManager({
+    projectManager,
+    getAudioBandRanges: () => activeAudioBandRanges,
+    onStatusChanged: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('syphon:statusChanged', status);
+      }
+    }
+  });
 
   // Watch for project file changes and notify renderer / preview
   // Note: liveWindow is strictly isolated via swap buffer and only updates on explicit push!
@@ -1470,6 +1612,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (syphonSpoutManager) syphonSpoutManager.stop(false);
   if (oscBridge) oscBridge.stop();
   if (projectManager) projectManager.stopServer();
   if (ffmpegExporter) ffmpegExporter.cancelExport();

@@ -5,10 +5,12 @@ const { contextBridge, ipcRenderer } = require('electron');
  * Exposes a secure, typed IPC bridge to the renderer
  */
 contextBridge.exposeInMainWorld('electronAPI', {
-  // --- System External Browser & Hardware Permissions ---
+  // --- System External Browser, Hardware Permissions & GitHub Update Checker ---
   system: {
     openExternal: (url) => ipcRenderer.invoke('system:openExternal', url),
-    requestMicrophoneAccess: () => ipcRenderer.invoke('system:requestMicrophoneAccess')
+    requestMicrophoneAccess: () => ipcRenderer.invoke('system:requestMicrophoneAccess'),
+    getAppVersion: () => ipcRenderer.invoke('system:getAppVersion'),
+    checkForUpdates: () => ipcRenderer.invoke('system:checkForUpdates')
   },
 
   // --- Window Controls ---
@@ -119,6 +121,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const listener = (event, data) => callback(data);
       ipcRenderer.on('displays:changed', listener);
       return () => ipcRenderer.removeListener('displays:changed', listener);
+    }
+  },
+
+  // --- Syphon (macOS) / Spout (Windows) Hardware GPU Live Stage Transmitter ---
+  syphon: {
+    getStatus: () => ipcRenderer.invoke('syphon:getStatus'),
+    start: (options) => ipcRenderer.invoke('syphon:start', options),
+    stop: () => ipcRenderer.invoke('syphon:stop'),
+    toggle: (options) => ipcRenderer.invoke('syphon:toggle', options),
+    updateConfig: (options) => ipcRenderer.invoke('syphon:updateConfig', options),
+    listServers: () => ipcRenderer.invoke('syphon:listServers'),
+    onStatusChanged: (callback) => {
+      const listener = (event, data) => callback(data);
+      ipcRenderer.on('syphon:statusChanged', listener);
+      return () => ipcRenderer.removeListener('syphon:statusChanged', listener);
     }
   },
 

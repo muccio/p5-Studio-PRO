@@ -65,8 +65,15 @@ class IDEApp {
     // Sketch Playback state
     this.isPaused = false;
 
-    // Live Stage safe staging & manual push state
+    // Live Stage safe staging & manual push state + Syphon/Spout GPU broadcast state
     this.isLiveWindowOpen = false;
+    this.isSyphonActive = false;
+    this.syphonProtocol = 'Syphon / Spout';
+    this.syphonConfig = {
+      senderName: localStorage.getItem('p5_studio_syphon_name') || 'p5-Studio-PRO Live Stage',
+      resolution: localStorage.getItem('p5_studio_syphon_res') || '1920x1080',
+      fps: parseInt(localStorage.getItem('p5_studio_syphon_fps') || '60', 10) || 60
+    };
     this.isLiveDirty = false;
     this.pendingLiveType = null;
     this.hasShaderErrors = false;
@@ -127,6 +134,7 @@ class IDEApp {
     this.initConsoleControls();
     this.initPreviewViewportControls();
     this.initLiveWindowControls();
+    this.initSyphonSpoutControls();
     this.initChatbotBrowserControls();
     this.performanceController.initUI();
 
@@ -140,6 +148,7 @@ class IDEApp {
     this.initP5ReferenceModal();
     this.initAppearanceControls();
     this.initCollapsiblePanels();
+    this.initVersionUpdateChecker();
 
     // Restore window opacity from saved preferences
     if (this.currentWindowOpacity !== 1.0) {
@@ -336,7 +345,7 @@ class IDEApp {
           if (window.electronAPI) {
             if (window.electronAPI.preview) window.electronAPI.preview.notifyShaderHotReload();
             // In Live mode: do NOT push automatically to the external display; mark dirty for manual push!
-            if (this.isLiveWindowOpen) {
+            if (this.isLiveOutputActive()) {
               this.setLiveStageDirty(true, 'shader');
             }
           }
@@ -344,18 +353,18 @@ class IDEApp {
           const isSyntaxValid = this.validateActiveScript(content);
           if (isSyntaxValid) {
             await this.restartPreview();
-            if (this.isLiveWindowOpen) {
+            if (this.isLiveOutputActive()) {
               this.setLiveStageDirty(true, 'code');
             }
           } else {
             // Fault-tolerant Live Coding: keep previous working canvas alive!
-            if (this.isLiveWindowOpen) {
+            if (this.isLiveOutputActive()) {
               this.setLiveStageDirty(true, 'code');
             }
           }
         } else if (['html', 'htm', 'css', 'json'].includes(ext)) {
           await this.restartPreview();
-          if (this.isLiveWindowOpen) {
+          if (this.isLiveOutputActive()) {
             this.setLiveStageDirty(true, 'code');
           }
         }
@@ -2094,6 +2103,10 @@ class IDEApp {
     }
   }
 
+  isLiveOutputActive() {
+    return Boolean(this.isLiveWindowOpen || this.isSyphonActive);
+  }
+
   updateLiveUI(status) {
     const btnToggle = document.getElementById('btn-toggle-live-window');
     const label = document.getElementById('label-live-btn');
@@ -2108,11 +2121,164 @@ class IDEApp {
       btnToggle.classList.add('active');
       label.textContent = status.isFullscreen ? 'LIVE (FULL)' : 'LIVE ON';
       if (btnFs) btnFs.classList.remove('hidden');
-      if (btnPush) btnPush.classList.remove('hidden');
     } else {
       btnToggle.classList.remove('active');
       label.textContent = 'Live Stage';
       if (btnFs) btnFs.classList.add('hidden');
+    }
+
+    if (this.isLiveOutputActive()) {
+      if (btnPush) btnPush.classList.remove('hidden');
+    } else {
+      if (btnPush) btnPush.classList.add('hidden');
+      this.setLiveStageDirty(false);
+    }
+  }
+
+  // =========================================================================
+  // 9b. Syphon (macOS) / Spout (Windows) Hardware GPU Transmitter Controls
+  // =========================================================================
+  async initSyphonSpoutControls() {
+    const btnToggle = document.getElementById('btn-toggle-syphon');
+    const btnSettings = document.getElementById('btn-syphon-settings');
+    const modal = document.getElementById('syphon-modal');
+    const btnCloseModal = document.getElementById('btn-close-syphon-modal');
+    const inputName = document.getElementById('input-syphon-name');
+    const selectRes = document.getElementById('select-syphon-resolution');
+    const selectFps = document.getElementById('select-syphon-fps');
+    const btnApply = document.getElementById('btn-syphon-apply');
+    const btnModalToggle = document.getElementById('btn-syphon-modal-toggle');
+
+    if (inputName) inputName.value = this.syphonConfig.senderName;
+    if (selectRes) selectRes.value = this.syphonConfig.resolution;
+    if (selectFps) selectFps.value = String(this.syphonConfig.fps);
+
+    const getPayload = () => {
+      const nameVal = (inputName && inputName.value.trim()) ? inputName.value.trim() : this.syphonConfig.senderName;
+      const resVal = (selectRes && selectRes.value) ? selectRes.value : this.syphonConfig.resolution;
+      const fpsVal = parseInt(selectFps ? selectFps.value : String(this.syphonConfig.fps), 10) || 60;
+      const [wStr, hStr] = resVal.split('x');
+      const width = parseInt(wStr, 10) || 1920;
+      const height = parseInt(hStr, 10) || 1080;
+
+      this.syphonConfig = { senderName: nameVal, resolution: `${width}x${height}`, fps: fpsVal };
+      try {
+        localStorage.setItem('p5_studio_syphon_name', nameVal);
+        localStorage.setItem('p5_studio_syphon_res', `${width}x${height}`);
+        localStorage.setItem('p5_studio_syphon_fps', String(fpsVal));
+      } catch (e) {}
+
+      return { senderName: nameVal, width, height, fps: fpsVal };
+    };
+
+    if (btnToggle) {
+      btnToggle.addEventListener('click', async () => {
+        if (!window.electronAPI || !window.electronAPI.syphon) return;
+        await this.flushPendingSave();
+        const status = await window.electronAPI.syphon.toggle(getPayload());
+        this.updateSyphonUI(status);
+      });
+    }
+
+    if (btnSettings && modal) {
+      btnSettings.addEventListener('click', async () => {
+        modal.classList.remove('hidden');
+        await this.refreshSyphonServersList();
+      });
+    }
+
+    if (btnCloseModal && modal) {
+      btnCloseModal.addEventListener('click', () => {
+        modal.classList.add('hidden');
+      });
+    }
+
+    if (btnApply) {
+      btnApply.addEventListener('click', async () => {
+        if (!window.electronAPI || !window.electronAPI.syphon) return;
+        const status = await window.electronAPI.syphon.updateConfig(getPayload());
+        this.updateSyphonUI(status);
+        await this.refreshSyphonServersList();
+      });
+    }
+
+    if (btnModalToggle) {
+      btnModalToggle.addEventListener('click', async () => {
+        if (!window.electronAPI || !window.electronAPI.syphon) return;
+        await this.flushPendingSave();
+        const status = await window.electronAPI.syphon.toggle(getPayload());
+        this.updateSyphonUI(status);
+        await this.refreshSyphonServersList();
+      });
+    }
+
+    if (window.electronAPI && window.electronAPI.syphon) {
+      window.electronAPI.syphon.onStatusChanged((status) => {
+        this.updateSyphonUI(status);
+        this.refreshSyphonServersList();
+      });
+      const initialStatus = await window.electronAPI.syphon.getStatus();
+      this.updateSyphonUI(initialStatus);
+    }
+  }
+
+  async refreshSyphonServersList() {
+    const el = document.getElementById('syphon-active-servers');
+    if (!el || !window.electronAPI || !window.electronAPI.syphon) return;
+    try {
+      const servers = await window.electronAPI.syphon.listServers();
+      if (Array.isArray(servers) && servers.length > 0) {
+        el.textContent = servers.map((s) => s.name || s.appName || 'Server').join(', ');
+      } else {
+        el.textContent = this.isSyphonActive ? this.syphonConfig.senderName : 'Nessuna';
+      }
+    } catch (e) {
+      el.textContent = 'Nessuna';
+    }
+  }
+
+  updateSyphonUI(status) {
+    if (!status) return;
+    const btnToggle = document.getElementById('btn-toggle-syphon');
+    const labelBtn = document.getElementById('label-syphon-btn');
+    const btnPush = document.getElementById('btn-push-live-stage');
+    const modalTitle = document.getElementById('syphon-modal-title');
+    const protoBadge = document.getElementById('syphon-status-protocol');
+    const stateBadge = document.getElementById('syphon-status-state');
+    const btnModalToggle = document.getElementById('btn-syphon-modal-toggle');
+
+    this.isSyphonActive = Boolean(status.isActive);
+    this.syphonProtocol = status.protocol || 'Syphon / Spout';
+
+    if (labelBtn) {
+      labelBtn.textContent = this.isSyphonActive
+        ? `${this.syphonProtocol.toUpperCase()} ON`
+        : this.syphonProtocol;
+    }
+    if (btnToggle) {
+      btnToggle.classList.toggle('active', this.isSyphonActive);
+    }
+    if (modalTitle) {
+      modalTitle.textContent = `Trasmissione GPU Live Stage (${this.syphonProtocol})`;
+    }
+    if (protoBadge) {
+      protoBadge.textContent = `${this.syphonProtocol} (${status.nativePlatform || 'GPU Zero-Copy'})`;
+    }
+    if (stateBadge) {
+      stateBadge.textContent = this.isSyphonActive
+        ? `ATTIVO • ${status.width || 1920}×${status.height || 1080} @ ${status.fps || 60}fps`
+        : 'Inattivo';
+      stateBadge.style.color = this.isSyphonActive ? '#00ff88' : '';
+    }
+    if (btnModalToggle) {
+      btnModalToggle.textContent = this.isSyphonActive
+        ? `Ferma Trasmissione ${this.syphonProtocol}`
+        : `Avvia Trasmissione ${this.syphonProtocol}`;
+    }
+
+    if (this.isLiveOutputActive()) {
+      if (btnPush) btnPush.classList.remove('hidden');
+    } else {
       if (btnPush) btnPush.classList.add('hidden');
       this.setLiveStageDirty(false);
     }
@@ -2140,7 +2306,7 @@ class IDEApp {
   }
 
   async pushToLiveStage() {
-    if (!this.isLiveWindowOpen || !window.electronAPI || !window.electronAPI.live) {
+    if (!this.isLiveOutputActive() || !window.electronAPI || !window.electronAPI.live) {
       return;
     }
 
@@ -3146,6 +3312,185 @@ class IDEApp {
         await this.refreshFileTree();
       }
     });
+  }
+
+  // =========================================================================
+  // 15. GitHub Version & Release Update Checker
+  // =========================================================================
+  async initVersionUpdateChecker() {
+    this.latestUpdateInfo = null;
+    this.updateBannerDismissed = false;
+
+    const btnBadge = document.getElementById('btn-check-updates');
+    const banner = document.getElementById('update-notification-banner');
+    const btnBannerDetails = document.getElementById('btn-update-banner-details');
+    const btnBannerDownload = document.getElementById('btn-update-banner-download');
+    const btnBannerClose = document.getElementById('btn-update-banner-close');
+    const modal = document.getElementById('update-modal');
+    const btnCloseModal = document.getElementById('btn-close-update-modal');
+    const btnRecheck = document.getElementById('btn-recheck-updates');
+    const btnOpenRelease = document.getElementById('btn-open-github-release');
+
+    if (window.electronAPI && window.electronAPI.system && window.electronAPI.system.getAppVersion) {
+      try {
+        const ver = await window.electronAPI.system.getAppVersion();
+        if (ver && btnBadge) btnBadge.textContent = `v${ver}`;
+        const curEl = document.getElementById('update-current-version');
+        if (ver && curEl) curEl.textContent = `v${ver}`;
+      } catch (e) {}
+    }
+
+    if (btnBadge) {
+      btnBadge.addEventListener('click', async () => {
+        if (modal) modal.classList.remove('hidden');
+        await this.checkForAppUpdates(true);
+      });
+    }
+
+    if (btnBannerDetails && modal) {
+      btnBannerDetails.addEventListener('click', () => {
+        if (banner) banner.classList.add('hidden');
+        modal.classList.remove('hidden');
+      });
+    }
+
+    if (btnBannerDownload) {
+      btnBannerDownload.addEventListener('click', () => {
+        const url = (this.latestUpdateInfo && (this.latestUpdateInfo.downloadUrl || this.latestUpdateInfo.releaseUrl))
+          || 'https://github.com/muccio/p5-Studio-PRO/releases/latest';
+        if (window.electronAPI && window.electronAPI.system) {
+          window.electronAPI.system.openExternal(url);
+        }
+      });
+    }
+
+    if (btnBannerClose && banner) {
+      btnBannerClose.addEventListener('click', () => {
+        this.updateBannerDismissed = true;
+        banner.classList.add('hidden');
+      });
+    }
+
+    if (btnCloseModal && modal) {
+      btnCloseModal.addEventListener('click', () => {
+        modal.classList.add('hidden');
+      });
+    }
+
+    if (btnRecheck) {
+      btnRecheck.addEventListener('click', async () => {
+        await this.checkForAppUpdates(true);
+      });
+    }
+
+    if (btnOpenRelease) {
+      btnOpenRelease.addEventListener('click', () => {
+        const url = (this.latestUpdateInfo && (this.latestUpdateInfo.downloadUrl || this.latestUpdateInfo.releaseUrl))
+          || 'https://github.com/muccio/p5-Studio-PRO/releases/latest';
+        if (window.electronAPI && window.electronAPI.system) {
+          window.electronAPI.system.openExternal(url);
+        }
+      });
+    }
+
+    // Background automatic check on startup (after 2.5s) and every 4 hours
+    setTimeout(() => {
+      this.checkForAppUpdates(false);
+    }, 2500);
+    setInterval(() => {
+      this.checkForAppUpdates(false);
+    }, 4 * 60 * 60 * 1000);
+  }
+
+  async checkForAppUpdates(isManual = false) {
+    if (!window.electronAPI || !window.electronAPI.system || !window.electronAPI.system.checkForUpdates) {
+      return null;
+    }
+
+    const btnBadge = document.getElementById('btn-check-updates');
+    const banner = document.getElementById('update-notification-banner');
+    const bannerTitle = document.getElementById('update-banner-title');
+    const bannerSubtitle = document.getElementById('update-banner-subtitle');
+    const curVerEl = document.getElementById('update-current-version');
+    const latestVerEl = document.getElementById('update-latest-version');
+    const statusTextEl = document.getElementById('update-status-text');
+    const notesContainer = document.getElementById('update-notes-container');
+    const notesTitle = document.getElementById('update-release-title');
+    const notesPre = document.getElementById('update-release-notes');
+    const btnOpenRelease = document.getElementById('btn-open-github-release');
+
+    if (isManual && statusTextEl) {
+      statusTextEl.textContent = 'Verifica in corso su GitHub...';
+      statusTextEl.style.color = '';
+    }
+
+    try {
+      const info = await window.electronAPI.system.checkForUpdates();
+      this.latestUpdateInfo = info;
+
+      if (curVerEl && info.currentVersion) {
+        curVerEl.textContent = `v${info.currentVersion}`;
+      }
+      if (latestVerEl && info.latestVersion) {
+        latestVerEl.textContent = `v${info.latestVersion}`;
+      }
+
+      if (info && info.hasUpdate) {
+        if (btnBadge) {
+          btnBadge.classList.add('has-update');
+          btnBadge.textContent = `⬆ v${info.latestVersion}`;
+          btnBadge.title = `Nuova versione v${info.latestVersion} disponibile su GitHub! (installata: v${info.currentVersion})`;
+        }
+        if (statusTextEl) {
+          statusTextEl.textContent = `🎉 Nuova versione v${info.latestVersion} disponibile!`;
+          statusTextEl.style.color = '#00ff88';
+        }
+        if (btnOpenRelease) {
+          btnOpenRelease.textContent = info.assetName
+            ? `Scarica ${info.assetName}`
+            : `Scarica Release v${info.latestVersion}`;
+        }
+        if (notesContainer && notesPre) {
+          notesContainer.classList.remove('hidden');
+          if (notesTitle) notesTitle.textContent = info.releaseTitle || `Novità v${info.latestVersion}`;
+          notesPre.textContent = info.releaseNotes || 'Nessuna nota di rilascio specificata.';
+        }
+        if (banner && !this.updateBannerDismissed) {
+          if (bannerTitle) {
+            bannerTitle.textContent = `Nuova release disponibile: v${info.latestVersion}`;
+          }
+          if (bannerSubtitle) {
+            bannerSubtitle.textContent = `Versione attuale v${info.currentVersion} — Clicca su Scarica per aggiornare.`;
+          }
+          banner.classList.remove('hidden');
+        }
+      } else {
+        if (btnBadge && info && info.currentVersion) {
+          btnBadge.classList.remove('has-update');
+          btnBadge.textContent = `v${info.currentVersion}`;
+        }
+        if (statusTextEl) {
+          statusTextEl.textContent = info && info.checked
+            ? '✓ Sei già all\'ultima versione disponibile'
+            : `Impossibile verificare (${(info && info.error) || 'offline'})`;
+          statusTextEl.style.color = info && info.checked ? '#00f0ff' : '';
+        }
+        if (btnOpenRelease) {
+          btnOpenRelease.textContent = 'Apri Pagina Release GitHub';
+        }
+        if (notesContainer && notesPre && info && info.releaseNotes) {
+          notesContainer.classList.remove('hidden');
+          if (notesTitle) notesTitle.textContent = info.releaseTitle || `Release v${info.latestVersion}`;
+          notesPre.textContent = info.releaseNotes;
+        }
+      }
+      return info;
+    } catch (err) {
+      if (statusTextEl) {
+        statusTextEl.textContent = `Errore controllo versione: ${err.message}`;
+      }
+      return null;
+    }
   }
 }
 

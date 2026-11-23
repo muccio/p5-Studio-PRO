@@ -159,7 +159,7 @@
       </div>
 
       <div class="header-group header-group-right">
-        <!-- Live Stage Window Controls with Safe Staging & Manual Push -->
+        <!-- Live Stage Window Controls with Safe Staging & Manual Push + Syphon/Spout GPU Broadcast -->
         <div class="live-stage-cluster">
           <button id="btn-toggle-live-window" class="btn btn-live" title="Apri / Chiudi Uscita Live Stage su Display/Proiettore esterno">
             <svg class="icon" viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>
@@ -169,7 +169,17 @@
           <select id="select-live-display" class="dropdown dropdown-live" title="Indirizza Live Stage su Monitor / Proiettore">
             <option value="auto">Auto Display</option>
           </select>
-          <button id="btn-push-live-stage" class="btn btn-push-stage hidden" title="Invia modifiche correnti alla finestra Live Stage (Cmd/Ctrl + Enter)">
+          <div class="syphon-cluster">
+            <button id="btn-toggle-syphon" class="btn btn-syphon" title="Trasmetti il Live Stage via GPU Zero-Copy come sorgente Syphon (macOS) o Spout (Windows) per Resolume, MadMapper, TouchDesigner, VDMX, OBS">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/><path d="M8.5 8.5L16.5 12L8.5 15.5V8.5Z"/></svg>
+              <span class="syphon-led"></span>
+              <span id="label-syphon-btn">Syphon / Spout</span>
+            </button>
+            <button id="btn-syphon-settings" class="btn btn-icon btn-syphon-cfg" title="Configura Nome Sorgente, Risoluzione e FPS Syphon / Spout">
+              <svg class="icon-small" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+            </button>
+          </div>
+          <button id="btn-push-live-stage" class="btn btn-push-stage hidden" title="Invia modifiche correnti alla finestra Live Stage e allo stream Syphon/Spout (Cmd/Ctrl + Enter)">
             <svg class="icon-small" viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
             <span id="label-push-stage">Invia al Live</span>
             <span id="badge-live-dirty" class="badge-dirty hidden">●</span>
@@ -263,6 +273,8 @@
           <span class="status-sep">|</span>
           <span id="status-window-opacity" class="status-badge-interactive" title="Opacità Finestra Editor (clicca per impostazioni)">100%</span>
           <button id="btn-status-appearance" class="btn-status-icon" title="Apri Impostazioni Aspetto & Trasparenza">⚙</button>
+          <span class="status-sep">|</span>
+          <button id="btn-check-updates" class="btn-status-icon btn-version-badge" title="Versione installata — clicca per verificare la presenza di nuove release su GitHub">v1.7.0</button>
         </div>
       </div>
     </section>
@@ -810,6 +822,114 @@
       <div class="modal-footer">
         <button id="btn-reset-appearance" class="btn btn-secondary">Ripristina Predefiniti</button>
         <button id="btn-done-appearance" class="btn btn-primary">Fatto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SYPHON (macOS) / SPOUT (Windows) GPU TRANSMITTER MODAL -->
+  <div id="syphon-modal" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <span class="modal-title" id="syphon-modal-title">Trasmissione GPU Live Stage (Syphon / Spout)</span>
+        <button id="btn-close-syphon-modal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="input-syphon-name">Nome Sorgente Server (visibile in Resolume, MadMapper, TouchDesigner, OBS)</label>
+          <input type="text" id="input-syphon-name" class="form-input" value="p5-Studio-PRO Live Stage" placeholder="p5-Studio-PRO Live Stage">
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex: 2;">
+            <label for="select-syphon-resolution">Risoluzione Texture GPU</label>
+            <select id="select-syphon-resolution" class="form-input">
+              <option value="1920x1080" selected>1920 × 1080 (Full HD 16:9)</option>
+              <option value="1280x720">1280 × 720 (HD 16:9)</option>
+              <option value="3840x2160">3840 × 2160 (4K UHD 16:9)</option>
+              <option value="2560x1440">2560 × 1440 (QHD 16:9)</option>
+              <option value="1080x1080">1080 × 1080 (Square 1:1)</option>
+              <option value="1080x1920">1080 × 1920 (Vertical 9:16)</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label for="select-syphon-fps">Frame Rate</label>
+            <select id="select-syphon-fps" class="form-input">
+              <option value="60" selected>60 FPS</option>
+              <option value="30">30 FPS</option>
+              <option value="120">120 FPS</option>
+            </select>
+          </div>
+        </div>
+        <div class="syphon-status-card" id="syphon-status-card">
+          <div class="syphon-status-row">
+            <span class="syphon-status-label">Protocollo Nativo GPU:</span>
+            <span id="syphon-status-protocol" class="badge">Syphon Metal / Spout D3D11</span>
+          </div>
+          <div class="syphon-status-row">
+            <span class="syphon-status-label">Stato Trasmissione:</span>
+            <span id="syphon-status-state" class="badge">Inattivo</span>
+          </div>
+          <div class="syphon-status-row">
+            <span class="syphon-status-label">Sorgenti Attive Rilevate sul Sistema:</span>
+            <span id="syphon-active-servers" class="syphon-servers-list">Nessuna</span>
+          </div>
+        </div>
+        <p style="font-size: 11px; color: var(--text-muted); margin-top: 10px; line-height: 1.45;">
+          La trasmissione utilizza la condivisione hardware <strong>Zero-Copy GPU</strong> (<code>IOSurface</code> Metal su macOS per <strong>Syphon</strong>, <code>DXGI Shared Handle</code> DirectX 11 su Windows per <strong>Spout</strong>) ed è sincronizzata con il buffer sicuro del <strong>Live Stage</strong> (usa <em>Invia al Live</em> o <code>Cmd/Ctrl+Enter</code> per aggiornare lo sketch in onda).
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-syphon-apply" class="btn btn-secondary">Salva Impostazioni</button>
+        <button id="btn-syphon-modal-toggle" class="btn btn-primary">Avvia Trasmissione</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLOATING GITHUB UPDATE NOTIFICATION BANNER -->
+  <div id="update-notification-banner" class="update-notification-banner hidden">
+    <div class="update-banner-content">
+      <span class="update-banner-icon">⬆</span>
+      <div class="update-banner-text">
+        <strong id="update-banner-title">Nuova versione disponibile su GitHub!</strong>
+        <span id="update-banner-subtitle">È disponibile una nuova release di p5-Studio-PRO.</span>
+      </div>
+    </div>
+    <div class="update-banner-actions">
+      <button id="btn-update-banner-details" class="btn btn-secondary btn-sm">Note Release</button>
+      <button id="btn-update-banner-download" class="btn btn-primary btn-sm">Scarica</button>
+      <button id="btn-update-banner-close" class="btn-close" title="Ignora per questa sessione">&times;</button>
+    </div>
+  </div>
+
+  <!-- GITHUB VERSION & RELEASE CHECKER MODAL -->
+  <div id="update-modal" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <span class="modal-title">Controllo Versione &amp; Aggiornamenti GitHub</span>
+        <button id="btn-close-update-modal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="syphon-status-card">
+          <div class="syphon-status-row">
+            <span class="syphon-status-label">Versione Installata:</span>
+            <span id="update-current-version" class="badge">v1.7.0</span>
+          </div>
+          <div class="syphon-status-row">
+            <span class="syphon-status-label">Ultima Release su GitHub:</span>
+            <span id="update-latest-version" class="badge">Verifica in corso...</span>
+          </div>
+          <div class="syphon-status-row">
+            <span class="syphon-status-label">Stato:</span>
+            <span id="update-status-text" class="badge">Controllo...</span>
+          </div>
+        </div>
+        <div id="update-notes-container" class="update-notes-box hidden">
+          <div class="update-notes-header" id="update-release-title">Note di Rilascio</div>
+          <pre id="update-release-notes" class="update-notes-pre"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-recheck-updates" class="btn btn-secondary">Ricontrolla Ora</button>
+        <button id="btn-open-github-release" class="btn btn-primary">Apri / Scarica da GitHub</button>
       </div>
     </div>
   </div>
