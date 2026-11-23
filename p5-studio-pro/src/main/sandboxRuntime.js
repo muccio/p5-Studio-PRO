@@ -455,6 +455,118 @@
       await this.initLive(this.currentDeviceId);
     }
 
+    connectAudio(audioSource) {
+      if (!this.audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        this.audioCtx = new AudioContextClass();
+      }
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume().catch(() => {});
+      }
+      if (!this.analyser) {
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = this.fftSize;
+        this.analyser.smoothingTimeConstant = this.smoothingTimeConstant;
+      }
+      // When audio file playback is connected, mute the mic input so mic noise doesn't interfere
+      if (this.gainNode) {
+        this.gainNode.gain.value = 0.0;
+      }
+
+      let audioEl = null;
+      let mediaSourceNode = null;
+
+      if (typeof HTMLMediaElement !== 'undefined' && audioSource instanceof HTMLMediaElement) {
+        audioEl = audioSource;
+      } else if (audioSource && audioSource.elt instanceof HTMLMediaElement) {
+        audioEl = audioSource.elt;
+      } else if (audioSource && audioSource.element instanceof HTMLMediaElement) {
+        audioEl = audioSource.element;
+      }
+
+      if (audioEl) {
+        if (!audioEl.__ideSourceNode) {
+          audioEl.__ideSourceNode = this.audioCtx.createMediaElementSource(audioEl);
+        }
+        mediaSourceNode = audioEl.__ideSourceNode;
+      } else if (typeof AudioNode !== 'undefined' && audioSource instanceof AudioNode) {
+        mediaSourceNode = audioSource;
+      }
+
+      if (mediaSourceNode) {
+        if (!this.fileOutputGain) {
+          this.fileOutputGain = this.audioCtx.createGain();
+          this.fileOutputGain.gain.value = 1.0;
+          this.fileOutputGain.connect(this.audioCtx.destination);
+        }
+        try {
+          mediaSourceNode.connect(this.analyser);
+          mediaSourceNode.connect(this.fileOutputGain);
+        } catch (e) {}
+      }
+
+      this._startLiveLoop();
+
+      const controller = {
+        element: audioEl,
+        sourceNode: mediaSourceNode,
+        play: () => {
+          if (this.audioCtx && this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume().catch(() => {});
+          }
+          return audioEl ? audioEl.play() : Promise.resolve();
+        },
+        pause: () => {
+          if (audioEl) audioEl.pause();
+        },
+        stop: () => {
+          if (audioEl) {
+            audioEl.pause();
+            audioEl.currentTime = 0;
+          }
+        },
+        togglePlay: () => {
+          if (!audioEl) return false;
+          if (audioEl.paused) {
+            controller.play();
+            return true;
+          } else {
+            controller.pause();
+            return false;
+          }
+        },
+        setVolume: (v) => {
+          const val = Math.max(0, Math.min(1, Number(v) || 0));
+          if (this.fileOutputGain) this.fileOutputGain.gain.value = val;
+          if (audioEl) audioEl.volume = val;
+        },
+        isPlaying: () => (audioEl ? !audioEl.paused : false),
+        get currentTime() { return audioEl ? audioEl.currentTime : 0; },
+        set currentTime(t) { if (audioEl) audioEl.currentTime = Number(t) || 0; },
+        get duration() { return audioEl ? (audioEl.duration || 0) : 0; },
+        get loop() { return audioEl ? audioEl.loop : false; },
+        set loop(b) { if (audioEl) audioEl.loop = Boolean(b); }
+      };
+
+      return controller;
+    }
+
+    loadAudio(src, autoplay = false) {
+      const audioEl = new Audio();
+      audioEl.crossOrigin = 'anonymous';
+      audioEl.preload = 'auto';
+      if (typeof Blob !== 'undefined' && (src instanceof Blob || src instanceof File)) {
+        audioEl.src = URL.createObjectURL(src);
+      } else if (typeof src === 'string') {
+        audioEl.src = src;
+      }
+      const ctrl = this.connectAudio(audioEl);
+      if (autoplay) {
+        ctrl.play().catch(() => {});
+      }
+      return ctrl;
+    }
+
     update(virtualFrame = 0, targetFps = 60) {
       if (isExportMode && this.offlinePcm) {
         this._updateOffline(virtualFrame, targetFps);
@@ -1198,7 +1310,12 @@
       this.smoothing = typeof smoothing === 'number' ? Math.max(0.0, Math.min(0.999, smoothing)) : 0.8;
       if (window.ideAudio) window.ideAudio.smooth(this.smoothing);
     }
-    setInput() { return this; }
+    setInput(snd) {
+      if (snd && window.ideAudio && typeof window.ideAudio.connectAudio === 'function') {
+        window.ideAudio.connectAudio(snd);
+      }
+      return this;
+    }
     smooth(s) {
       if (typeof s === 'number') this.smoothing = Math.max(0.0, Math.min(0.999, s));
       return window.ideAudio ? window.ideAudio.smooth(this.smoothing) : this.smoothing;
@@ -1237,7 +1354,12 @@
       this.volMax = 0.001;
       this._smoothedLevel = 0;
     }
-    setInput() { return this; }
+    setInput(snd) {
+      if (snd && window.ideAudio && typeof window.ideAudio.connectAudio === 'function') {
+        window.ideAudio.connectAudio(snd);
+      }
+      return this;
+    }
     smooth(s) {
       if (typeof s === 'number') this.smoothing = Math.max(0.0, Math.min(0.999, s));
       return this.smoothing;

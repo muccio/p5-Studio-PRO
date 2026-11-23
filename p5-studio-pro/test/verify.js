@@ -941,6 +941,8 @@ test('24. Verify Preview Viewport Zoom & Corner/Center Anchoring and p5.FFT-Comp
   assert.ok(sandboxRuntime.includes('logAverages(octaveBands)'), 'sandboxRuntime.js must implement ideAudio.logAverages');
   assert.ok(sandboxRuntime.includes('getOctaveBands('), 'sandboxRuntime.js must implement ideAudio.getOctaveBands');
   assert.ok(sandboxRuntime.includes('createFFT('), 'sandboxRuntime.js must implement ideAudio.createFFT');
+  assert.ok(sandboxRuntime.includes('loadAudio('), 'sandboxRuntime.js must implement ideAudio.loadAudio');
+  assert.ok(sandboxRuntime.includes('connectAudio('), 'sandboxRuntime.js must implement ideAudio.connectAudio');
   assert.ok(sandboxRuntime.includes('enableP5SoundHooks('), 'sandboxRuntime.js must implement ideAudio.enableP5SoundHooks');
   assert.ok(sandboxRuntime.includes('function applyViewportConfig'), 'sandboxRuntime.js must implement applyViewportConfig');
 
@@ -950,6 +952,8 @@ test('24. Verify Preview Viewport Zoom & Corner/Center Anchoring and p5.FFT-Comp
   assert.ok(sandboxPreload.includes('waveform(bins = 1024'), 'sandboxPreload.cjs must implement ideAudio.waveform');
   assert.ok(sandboxPreload.includes('getFFTEnergy(frequency1, frequency2)'), 'sandboxPreload.cjs must implement ideAudio.getFFTEnergy');
   assert.ok(sandboxPreload.includes('createFFT('), 'sandboxPreload.cjs must implement ideAudio.createFFT');
+  assert.ok(sandboxPreload.includes('loadAudio('), 'sandboxPreload.cjs must implement ideAudio.loadAudio');
+  assert.ok(sandboxPreload.includes('connectAudio('), 'sandboxPreload.cjs must implement ideAudio.connectAudio');
   assert.ok(sandboxPreload.includes('enableP5SoundHooks('), 'sandboxPreload.cjs must implement ideAudio.enableP5SoundHooks');
   assert.ok(sandboxPreload.includes('function applyViewportConfig'), 'sandboxPreload.cjs must implement applyViewportConfig');
 });

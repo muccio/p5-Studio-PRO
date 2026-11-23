@@ -472,6 +472,10 @@ declare interface IdeAudioEngine {
   createAmplitude(smoothing?: number): { getLevel(): number; smooth(s?: number): number; toggleNormalize(b?: boolean): void; setInput(i?: any): any };
   /** Create a drop-in p5.AudioIn replacement object powered by the IDE native audio engine */
   createAudioIn(): { start(cb?: () => void): void; stop(): void; getLevel(): number; amp(v: number): void; connect(): void; disconnect(): void };
+  /** Load an audio file (MP3, WAV, OGG, File/Blob) and connect it directly to the IDE audio analysis & output */
+  loadAudio(src: string | Blob | File, autoplay?: boolean): { play(): Promise<void>; pause(): void; stop(): void; togglePlay(): boolean; setVolume(v: number): void; isPlaying(): boolean; currentTime: number; duration: number; loop: boolean; element: HTMLAudioElement };
+  /** Connect an existing HTMLAudioElement or Web Audio AudioNode to the IDE analyser & master output */
+  connectAudio(audioSource: HTMLMediaElement | AudioNode | any): { play(): Promise<void>; pause(): void; stop(): void; togglePlay(): boolean; setVolume(v: number): void; isPlaying(): boolean; currentTime: number; duration: number; loop: boolean; element: HTMLAudioElement };
   /** Replace p5.FFT, p5.Amplitude, and p5.AudioIn with IDE native hooks */
   enableP5SoundHooks(force?: boolean): boolean;
   /** True when transient peak energy exceeds dynamic threshold */
@@ -1732,5 +1736,9 @@ export const P5_REFERENCE_DOCS = {
   'ideAudio.enableP5SoundHooks': {
     syntax: 'ideAudio.enableP5SoundHooks([force])',
     desc: 'Sostituisce `p5.FFT`, `p5.Amplitude` e `p5.AudioIn` con gli hook nativi dell\'IDE, permettendo di usare il codice `p5.sound` invariato con il motore audio dell\'IDE.'
+  },
+  'ideAudio.loadAudio': {
+    syntax: 'const sound = ideAudio.loadAudio(pathOrFile, [autoplay])',
+    desc: 'Carica un file audio (MP3, WAV, OGG o File da input) e lo connette direttamente al motore di analisi FFT/Ampiezza e alle casse/cuffie. Restituisce un controller con `play()`, `pause()`, `togglePlay()`, `stop()`, `setVolume(v)`, `currentTime`, `duration`, `loop`.'
   }
 };
